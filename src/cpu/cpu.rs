@@ -46,7 +46,8 @@ impl Opcode {
 #[derive(Copy, Clone)]
 pub enum Register {
   A,
-  F, // Z | N | H | CY | x | x | x | x    Z: 1 if result was 0, N: 1 if previous op was subtraction, H: carry from bit 3, CY: carry from bit 7
+  F,
+  // Z | N | H | CY | x | x | x | x    Z: 1 if result was 0, N: 1 if previous op was subtraction, H: carry from bit 3, CY: carry from bit 7
   AF,
   B,
   C,
@@ -156,6 +157,10 @@ impl CPU {
     self.registers[register.offset()] = value;
   }
 
+  pub fn write_register_masked(&mut self, register: Register, value: u8, mask: u8) {
+    self.registers[register.offset()] = (!mask & self.registers[register.offset()]) | (mask & value);
+  }
+
   pub fn write_register_pair(&mut self, register: Register, value: u16) {
     (&mut self.registers[register.offset()..]).write_u16::<BigEndian>(value).unwrap();
   }
@@ -166,24 +171,40 @@ impl CPU {
       0x00 => CPU::noop,
       0x01 => CPU::immediate_to_reg_pair_ld,
       0x02 => CPU::reg_A_to_indirect_BC_ld,
+      0x04 => CPU::increment_reg,
+      0x05 => CPU::decrement_reg,
       0x06 => CPU::immediate_to_reg_ld,
       0x08 => CPU::reg_SP_to_immediate_indirect_ld,
       0x0A => CPU::indirect_BC_to_reg_A_ld,
+      0x0C => CPU::increment_reg,
+      0x0D => CPU::decrement_reg,
       0x0E => CPU::immediate_to_reg_ld,
       0x11 => CPU::immediate_to_reg_pair_ld,
       0x12 => CPU::reg_A_to_indirect_DE_ld,
+      0x14 => CPU::increment_reg,
+      0x15 => CPU::decrement_reg,
       0x16 => CPU::immediate_to_reg_ld,
       0x1A => CPU::indirect_DE_to_reg_A_ld,
+      0x1C => CPU::increment_reg,
+      0x1D => CPU::decrement_reg,
       0x1E => CPU::immediate_to_reg_ld,
       0x21 => CPU::immediate_to_reg_pair_ld,
       0x22 => CPU::reg_A_to_indirect_HL_ld_and_increment,
+      0x24 => CPU::increment_reg,
+      0x25 => CPU::decrement_reg,
       0x26 => CPU::immediate_to_reg_ld,
       0x2A => CPU::indirect_HL_to_reg_A_ld_and_increment,
+      0x2C => CPU::increment_reg,
+      0x2D => CPU::decrement_reg,
       0x2E => CPU::immediate_to_reg_ld,
       0x31 => CPU::immediate_to_reg_pair_ld,
       0x32 => CPU::reg_A_to_indirect_HL_ld_and_decrement,
+      0x34 => CPU::increment_indirect_HL,
+      0x35 => CPU::decrement_indirect_HL,
       0x36 => CPU::immediate_to_indirect_ld,
       0x3A => CPU::indirect_HL_to_reg_A_ld_and_decrement,
+      0x3C => CPU::increment_reg,
+      0x3D => CPU::decrement_reg,
       0x3E => CPU::immediate_to_reg_ld,
       0x40..=0x45 => CPU::reg_to_reg_ld,
       0x46 => CPU::indirect_to_reg_ld,
@@ -216,6 +237,19 @@ impl CPU {
       0x97 => CPU::subtract_reg_from_reg_A_and_write_to_reg_A,
       0x98..=0x9D => CPU::subtract_reg_with_carry_from_reg_A_and_write_to_reg_A,
       0x9E => CPU::subtract_indirect_HL_with_carry_from_reg_A_and_write_to_reg_A,
+      0x9F => CPU::subtract_reg_with_carry_from_reg_A_and_write_to_reg_A,
+      0xA0..=0xA5 => CPU::and_reg_with_reg_A_and_write_to_reg_A,
+      0xA6 => CPU::and_indirect_HL_with_reg_A_and_write_to_reg_A,
+      0xA7 => CPU::and_reg_with_reg_A_and_write_to_reg_A,
+      0xA8..=0xAD => CPU::xor_reg_with_reg_A_and_write_to_reg_A,
+      0xAE => CPU::xor_indirect_HL_with_reg_A_and_write_to_reg_A,
+      0xAF => CPU::xor_reg_with_reg_A_and_write_to_reg_A,
+      0xB0..=0xB5 => CPU::or_reg_with_reg_A_and_write_to_reg_A,
+      0xB6 => CPU::or_indirect_HL_with_reg_A_and_write_to_reg_A,
+      0xB7 => CPU::or_reg_with_reg_A_and_write_to_reg_A,
+      0xB8..=0xBD => CPU::compare_reg_with_reg_A,
+      0xBE => CPU::compare_indirect_HL_with_reg_A,
+      0xBF => CPU::compare_reg_with_reg_A,
       0xC1 => CPU::pop_stack_to_reg_pair,
       0xC5 => CPU::push_reg_pair_to_stack,
       0xC6 => CPU::add_immediate_to_reg_A_and_write_to_reg_A,
@@ -228,14 +262,18 @@ impl CPU {
       0xE1 => CPU::pop_stack_to_reg_pair,
       0xE2 => CPU::reg_A_to_indirect_C_ld,
       0xE5 => CPU::push_reg_pair_to_stack,
+      0xE6 => CPU::and_immediate_with_reg_A_and_write_to_reg_A,
       0xEA => CPU::reg_A_to_immediate_indirect_ld,
+      0xEE => CPU::xor_immediate_with_reg_A_and_write_to_reg_A,
       0xF0 => CPU::immediate_indirect_with_offset_to_reg_A_ld,
       0xF1 => CPU::pop_stack_to_reg_pair,
       0xF2 => CPU::indirect_C_with_offset_to_reg_A_ld,
       0xF5 => CPU::push_reg_pair_to_stack,
+      0xF6 => CPU::or_immediate_with_reg_A_and_write_to_reg_A,
       0xF8 => CPU::reg_SP_plus_signed_immediate_to_HL_ld,
       0xF9 => CPU::reg_HL_to_reg_SP_ld,
       0xFA => CPU::immediate_indirect_to_reg_A_ld,
+      0xFE => CPU::compare_immediate_with_reg_A,
       _ => panic!("Unknown opcode"),
     };
     operation(self, opcode, memory)
@@ -470,6 +508,125 @@ impl CPU {
   fn add_indirect_HL_with_carry_to_reg_A_and_write_to_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
     let address = self.read_register_pair(Register::HL) as usize;
     self.add_value_with_carry_to_reg_A_and_write_to_reg_A(memory.read(address));
+  }
+
+  fn and_value_with_reg_A_and_write_to_reg_A(&mut self, value: u8) {
+    let reg_a = self.read_register(Register::A);
+    let result = ALU::and(reg_a, value);
+    self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.half_carry, 5), (result.carry, 4)]));
+    self.write_register(Register::A, result.value);
+  }
+
+  fn and_reg_with_reg_A_and_write_to_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
+    self.and_value_with_reg_A_and_write_to_reg_A(value);
+  }
+
+  fn and_immediate_with_reg_A_and_write_to_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let value = self.read_next_instruction(memory);
+    self.and_value_with_reg_A_and_write_to_reg_A(value);
+  }
+
+  fn and_indirect_HL_with_reg_A_and_write_to_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let address = self.read_register_pair(Register::HL) as usize;
+    self.and_value_with_reg_A_and_write_to_reg_A(memory.read(address));
+  }
+
+  fn or_value_with_reg_A_and_write_to_reg_A(&mut self, value: u8) {
+    let reg_a = self.read_register(Register::A);
+    let result = ALU::or(reg_a, value);
+    self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.half_carry, 5), (result.carry, 4)]));
+    self.write_register(Register::A, result.value);
+  }
+
+  fn or_reg_with_reg_A_and_write_to_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
+    self.or_value_with_reg_A_and_write_to_reg_A(value);
+  }
+
+  fn or_immediate_with_reg_A_and_write_to_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let value = self.read_next_instruction(memory);
+    self.or_value_with_reg_A_and_write_to_reg_A(value);
+  }
+
+  fn or_indirect_HL_with_reg_A_and_write_to_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let address = self.read_register_pair(Register::HL) as usize;
+    self.or_value_with_reg_A_and_write_to_reg_A(memory.read(address));
+  }
+
+  fn xor_value_with_reg_A_and_write_to_reg_A(&mut self, value: u8) {
+    let reg_a = self.read_register(Register::A);
+    let result = ALU::xor(reg_a, value);
+    self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.half_carry, 5), (result.carry, 4)]));
+    self.write_register(Register::A, result.value);
+  }
+
+  fn xor_reg_with_reg_A_and_write_to_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
+    self.xor_value_with_reg_A_and_write_to_reg_A(value);
+  }
+
+  fn xor_immediate_with_reg_A_and_write_to_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let value = self.read_next_instruction(memory);
+    self.xor_value_with_reg_A_and_write_to_reg_A(value);
+  }
+
+  fn xor_indirect_HL_with_reg_A_and_write_to_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let address = self.read_register_pair(Register::HL) as usize;
+    self.xor_value_with_reg_A_and_write_to_reg_A(memory.read(address));
+  }
+
+  fn compare_value_with_reg_A(&mut self, value: u8) {
+    let reg_a = self.read_register(Register::A);
+    let result = ALU::subtract(reg_a, value);
+    self.write_register(Register::F, u8::compose(&[(result.zero, 7), (true, 6), (result.half_carry, 5), (result.carry, 4)]));
+  }
+
+  fn compare_reg_with_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
+    self.compare_value_with_reg_A(value);
+  }
+
+  fn compare_immediate_with_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let value = self.read_next_instruction(memory);
+    self.compare_value_with_reg_A(value);
+  }
+
+  fn compare_indirect_HL_with_reg_A(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let address = self.read_register_pair(Register::HL) as usize;
+    self.compare_value_with_reg_A(memory.read(address));
+  }
+
+  fn increment_reg(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let register = Register::from_r_bits(opcode.z_bits());
+    let value = self.read_register(register);
+    let result = ALU::add(value, 1);
+    self.write_register_masked(Register::F, u8::compose(&[(result.zero, 7), (result.half_carry, 5)]), 0xE0);
+    self.write_register(register, result.value);
+  }
+
+  fn increment_indirect_HL(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let address = self.read_register_pair(Register::HL) as usize;
+    let value = memory.read(address);
+    let result = ALU::add(value, 1);
+    self.write_register_masked(Register::F, u8::compose(&[(result.zero, 7), (result.half_carry, 5)]), 0xE0);
+    memory.write(address, result.value);
+  }
+
+  fn decrement_reg(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let register = Register::from_r_bits(opcode.z_bits());
+    let value = self.read_register(register);
+    let result = ALU::subtract(value, 1);
+    self.write_register_masked(Register::F, u8::compose(&[(result.zero, 7), (true, 6), (result.half_carry, 5)]), 0xE0);
+    self.write_register(register, result.value);
+  }
+
+  fn decrement_indirect_HL(&mut self, opcode: Opcode, memory: &mut dyn Memory) {
+    let address = self.read_register_pair(Register::HL) as usize;
+    let value = memory.read(address);
+    let result = ALU::subtract(value, 1);
+    self.write_register_masked(Register::F, u8::compose(&[(result.zero, 7), (true, 6), (result.half_carry, 5)]), 0xE0);
+    memory.write(address, result.value);
   }
 }
 
@@ -784,9 +941,9 @@ mod tests {
     assert_eq!(cpu.read_register_pair(Register::HL), 0x0002);
   }
 
-  #[test_case(0x0FF8, 0x07, 0x00 ; "no flags")]
-  #[test_case(0x0FF8, 0x08, 0x20 ; "only half carry")]
-  #[test_case(0xFFF8, 0x08, 0x30 ; "both carry flags")]
+  #[test_case(0x0FF8, 0x07, 0x00; "no flags")]
+  #[test_case(0x0FF8, 0x08, 0x20; "only half carry")]
+  #[test_case(0xFFF8, 0x08, 0x30; "both carry flags")]
   fn reg_SP_plus_signed_immediate_to_HL_ld_writes_correct_flags(sp: u16, e: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -810,9 +967,9 @@ mod tests {
     assert_eq!(memory.read(0xABCE), 0x7B);
   }
 
-  #[test_case(0xFC, 0x04, 0x00, 0xB0 ; "zero flag set correctly")]
-  #[test_case(0xF0, 0xF0, 0xE0, 0x10 ; "carry set correctly")]
-  #[test_case(0x08, 0x08, 0x10, 0x20 ; "half carry set correctly")]
+  #[test_case(0xFC, 0x04, 0x00, 0xB0; "zero flag set correctly")]
+  #[test_case(0xF0, 0xF0, 0xE0, 0x10; "carry set correctly")]
+  #[test_case(0x08, 0x08, 0x10, 0x20; "half carry set correctly")]
   fn add_reg_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -824,9 +981,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0x04, 0x00, 0xB0 ; "zero flag set correctly")]
-  #[test_case(0xF0, 0xF0, 0xE0, 0x10 ; "carry set correctly")]
-  #[test_case(0x08, 0x08, 0x10, 0x20 ; "half carry set correctly")]
+  #[test_case(0xFC, 0x04, 0x00, 0xB0; "zero flag set correctly")]
+  #[test_case(0xF0, 0xF0, 0xE0, 0x10; "carry set correctly")]
+  #[test_case(0x08, 0x08, 0x10, 0x20; "half carry set correctly")]
   fn add_immediate_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -838,9 +995,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0x04, 0x00, 0xB0 ; "zero flag set correctly")]
-  #[test_case(0xF0, 0xF0, 0xE0, 0x10 ; "carry set correctly")]
-  #[test_case(0x08, 0x08, 0x10, 0x20 ; "half carry set correctly")]
+  #[test_case(0xFC, 0x04, 0x00, 0xB0; "zero flag set correctly")]
+  #[test_case(0xF0, 0xF0, 0xE0, 0x10; "carry set correctly")]
+  #[test_case(0x08, 0x08, 0x10, 0x20; "half carry set correctly")]
   fn add_indirect_HL_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -853,9 +1010,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0x03, 0x00, 0xB0 ; "zero flag set correctly")]
-  #[test_case(0xF0, 0xEF, 0xE0, 0x30 ; "carry set correctly")]
-  #[test_case(0x08, 0x07, 0x10, 0x20 ; "half carry set correctly")]
+  #[test_case(0xFC, 0x03, 0x00, 0xB0; "zero flag set correctly")]
+  #[test_case(0xF0, 0xEF, 0xE0, 0x30; "carry set correctly")]
+  #[test_case(0x08, 0x07, 0x10, 0x20; "half carry set correctly")]
   fn add_reg_with_carry_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -868,9 +1025,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0x03, 0x00, 0xB0 ; "zero flag set correctly")]
-  #[test_case(0xF0, 0xEF, 0xE0, 0x30 ; "carry set correctly")]
-  #[test_case(0x08, 0x07, 0x10, 0x20 ; "half carry set correctly")]
+  #[test_case(0xFC, 0x03, 0x00, 0xB0; "zero flag set correctly")]
+  #[test_case(0xF0, 0xEF, 0xE0, 0x30; "carry set correctly")]
+  #[test_case(0x08, 0x07, 0x10, 0x20; "half carry set correctly")]
   fn add_immediate_with_carry_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -884,9 +1041,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0x03, 0x00, 0xB0 ; "zero flag set correctly")]
-  #[test_case(0xF0, 0xEF, 0xE0, 0x10 ; "carry set correctly")]
-  #[test_case(0x08, 0x07, 0x10, 0x20 ; "half carry set correctly")]
+  #[test_case(0xFC, 0x03, 0x00, 0xB0; "zero flag set correctly")]
+  #[test_case(0xF0, 0x10, 0x01, 0x10; "carry set correctly")]
+  #[test_case(0x08, 0x07, 0x10, 0x20; "half carry set correctly")]
   fn add_indirect_HL_with_carry_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -901,9 +1058,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0xFC, 0x00, 0xC0 ; "zero flag set correctly")]
-  #[test_case(0x1F, 0x3F, 0xE0, 0x50 ; "carry set correctly")]
-  #[test_case(0xF1, 0xE3, 0x0E, 0x60 ; "half carry set correctly")]
+  #[test_case(0xFC, 0xFC, 0x00, 0xC0; "zero flag set correctly")]
+  #[test_case(0x1F, 0x3F, 0xE0, 0x50; "carry set correctly")]
+  #[test_case(0xF1, 0xE3, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_reg_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -915,9 +1072,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0xFC, 0x00, 0xC0 ; "zero flag set correctly")]
-  #[test_case(0x1F, 0x3F, 0xE0, 0x50 ; "carry set correctly")]
-  #[test_case(0xF1, 0xE3, 0x0E, 0x60 ; "half carry set correctly")]
+  #[test_case(0xFC, 0xFC, 0x00, 0xC0; "zero flag set correctly")]
+  #[test_case(0x1F, 0x3F, 0xE0, 0x50; "carry set correctly")]
+  #[test_case(0xF1, 0xE3, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_immediate_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -929,9 +1086,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0xFC, 0x00, 0xC0 ; "zero flag set correctly")]
-  #[test_case(0x1F, 0x3F, 0xE0, 0x50 ; "carry set correctly")]
-  #[test_case(0xF1, 0xE3, 0x0E, 0x60 ; "half carry set correctly")]
+  #[test_case(0xFC, 0xFC, 0x00, 0xC0; "zero flag set correctly")]
+  #[test_case(0x1F, 0x3F, 0xE0, 0x50; "carry set correctly")]
+  #[test_case(0xF1, 0xE3, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_indirect_HL_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -944,9 +1101,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0xFB, 0x00, 0xC0 ; "zero flag set correctly")]
-  #[test_case(0x1F, 0x3E, 0xE0, 0x50 ; "carry set correctly")]
-  #[test_case(0xF1, 0xE2, 0x0E, 0x60 ; "half carry set correctly")]
+  #[test_case(0xFC, 0xFB, 0x00, 0xC0; "zero flag set correctly")]
+  #[test_case(0x1F, 0x3E, 0xE0, 0x50; "carry set correctly")]
+  #[test_case(0xF1, 0xE2, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_reg_with_carry_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -959,9 +1116,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0xFB, 0x00, 0xC0 ; "zero flag set correctly")]
-  #[test_case(0x1F, 0x3E, 0xE0, 0x50 ; "carry set correctly")]
-  #[test_case(0xF1, 0xE2, 0x0E, 0x60 ; "half carry set correctly")]
+  #[test_case(0xFC, 0xFB, 0x00, 0xC0; "zero flag set correctly")]
+  #[test_case(0x1F, 0x3E, 0xE0, 0x50; "carry set correctly")]
+  #[test_case(0xF1, 0xE2, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_immediate_with_carry_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -975,9 +1132,9 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
-  #[test_case(0xFC, 0xFB, 0x00, 0xC0 ; "zero flag set correctly")]
-  #[test_case(0x1F, 0x3E, 0xE0, 0x50 ; "carry set correctly")]
-  #[test_case(0xF1, 0xE2, 0x0E, 0x60 ; "half carry set correctly")]
+  #[test_case(0xFC, 0xFB, 0x00, 0xC0; "zero flag set correctly")]
+  #[test_case(0x1F, 0x3E, 0xE0, 0x50; "carry set correctly")]
+  #[test_case(0xF1, 0xE2, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_indirect_HL_with_carry_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
@@ -989,6 +1146,178 @@ mod tests {
     memory.write(0xABCD, value);
     cpu.execute(&mut memory);
     assert_eq!(cpu.read_register(Register::A), result);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0x5A, 0xA5, 0x00, 0xA0; "zero flag set correctly")]
+  #[test_case(0xAC, 0xCA, 0x88, 0x20; "half carry set correctly")]
+  fn and_reg_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register(Register::D, value);
+    memory.write(0x0000, 0xA2);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::A), result);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0x5A, 0xA5, 0x00, 0xA0; "zero flag set correctly")]
+  #[test_case(0xAC, 0xCA, 0x88, 0x20; "half carry set correctly")]
+  fn and_immediate_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register(Register::F, 0x10);
+
+    memory.write(0x0000, 0xE6);
+    memory.write(0x0001, value);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::A), result);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0x5A, 0xA5, 0x00, 0xA0; "zero flag set correctly")]
+  #[test_case(0xAC, 0xCA, 0x88, 0x20; "half carry set correctly")]
+  fn and_indirect_HL_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register(Register::F, 0x10);
+
+    cpu.write_register_pair(Register::HL, 0xABCD);
+    memory.write(0x0000, 0xA6);
+    memory.write(0xABCD, value);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::A), result);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0x00, 0x00, 0x00, 0x80; "zero flag set correctly")]
+  #[test_case(0xAC, 0xCA, 0xEE, 0x00; "calculates OR correctly")]
+  fn or_reg_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register(Register::D, value);
+    memory.write(0x0000, 0xB2);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::A), result);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0x00, 0x00, 0x00, 0x80; "zero flag set correctly")]
+  #[test_case(0xAC, 0xCA, 0xEE, 0x00; "calculates OR correctly")]
+  fn or_immediate_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register(Register::F, 0x10);
+
+    memory.write(0x0000, 0xF6);
+    memory.write(0x0001, value);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::A), result);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0x00, 0x00, 0x00, 0x80; "zero flag set correctly")]
+  #[test_case(0xAC, 0xCA, 0xEE, 0x00; "calculates OR correctly")]
+  fn or_indirect_HL_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register(Register::F, 0x10);
+
+    cpu.write_register_pair(Register::HL, 0xABCD);
+    memory.write(0x0000, 0xB6);
+    memory.write(0xABCD, value);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::A), result);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0xAE, 0xAE, 0x00, 0x80; "zero flag set correctly")]
+  #[test_case(0xAC, 0xCA, 0x66, 0x00; "calculates XOR correctly")]
+  fn xor_reg_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register(Register::D, value);
+    memory.write(0x0000, 0xAA);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::A), result);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0xAE, 0xAE, 0x00, 0x80; "zero flag set correctly")]
+  #[test_case(0xAC, 0xCA, 0x66, 0x00; "calculates XOR correctly")]
+  fn xor_immediate_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register(Register::F, 0x10);
+
+    memory.write(0x0000, 0xEE);
+    memory.write(0x0001, value);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::A), result);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0xAE, 0xAE, 0x00, 0x80; "zero flag set correctly")]
+  #[test_case(0xAC, 0xCA, 0x66, 0x00; "calculates XOR correctly")]
+  fn xor_indirect_HL_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register(Register::F, 0x10);
+
+    cpu.write_register_pair(Register::HL, 0xABCD);
+    memory.write(0x0000, 0xAE);
+    memory.write(0xABCD, value);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::A), result);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0xFC, 0xFC, 0xC0; "zero flag set correctly")]
+  #[test_case(0x1F, 0x3F, 0x50; "carry set correctly")]
+  #[test_case(0xF1, 0xE3, 0x60; "half carry set correctly")]
+  fn compare_reg_with_reg_A(a: u8, value: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register(Register::D, value);
+    memory.write(0x0000, 0xBA);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0xFC, 0xFC, 0xC0; "zero flag set correctly")]
+  #[test_case(0x1F, 0x3F, 0x50; "carry set correctly")]
+  #[test_case(0xF1, 0xE3, 0x60; "half carry set correctly")]
+  fn compare_immediate_with_reg_A(a: u8, value: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    memory.write(0x0000, 0xFE);
+    memory.write(0x0001, value);
+    cpu.execute(&mut memory);
+    assert_eq!(cpu.read_register(Register::F), f);
+  }
+
+  #[test_case(0xFC, 0xFC, 0xC0; "zero flag set correctly")]
+  #[test_case(0x1F, 0x3F, 0x50; "carry set correctly")]
+  #[test_case(0xF1, 0xE3, 0x60; "half carry set correctly")]
+  fn compare_indirect_HL_with_reg_A(a: u8, value: u8, f: u8) {
+    let mut cpu = CPU::new();
+    let mut memory = MockMemory::new();
+    cpu.write_register(Register::A, a);
+    cpu.write_register_pair(Register::HL, 0xABCD);
+    memory.write(0x0000, 0xBE);
+    memory.write(0xABCD, value);
+    cpu.execute(&mut memory);
     assert_eq!(cpu.read_register(Register::F), f);
   }
 }

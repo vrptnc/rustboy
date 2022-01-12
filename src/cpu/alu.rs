@@ -43,4 +43,34 @@ impl ALU {
       zero: truncated_result == 0
     }
   }
+
+  pub fn and(operand1: u8, operand2: u8) -> Result {
+    let result = operand1 & operand2;
+    Result {
+      value: result,
+      carry: false,
+      half_carry: true,
+      zero: result == 0
+    }
+  }
+
+  pub fn or(operand1: u8, operand2: u8) -> Result {
+    let result = operand1 | operand2;
+    Result {
+      value: result,
+      carry: false,
+      half_carry: false,
+      zero: result == 0
+    }
+  }
+
+  pub fn xor(operand1: u8, operand2: u8) -> Result {
+    let result = operand1 ^ operand2;
+    Result {
+      value: result,
+      carry: false,
+      half_carry: false,
+      zero: result == 0
+    }
+  }
 }
