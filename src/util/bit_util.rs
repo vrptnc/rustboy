@@ -1,32 +1,73 @@
 pub trait BitUtil {
-  fn compose(bits: &[(bool, u32)]) -> Self;
-  fn get_bit(&self, bit: u32) -> bool;
+  fn compose(bits: &[(bool, u8)]) -> Self;
+  fn get_bit(&self, bit: u8) -> bool;
+  fn set_bit(&self, bit: u8) -> Self;
+  fn reset_bit(&self, bit: u8) -> Self;
 }
 
 impl BitUtil for u8 {
-  fn compose(bits: &[(bool, u32)]) -> Self {
+  fn compose(bits: &[(bool, u8)]) -> Self {
     bits.iter().map(|a| {
-      (if a.0 { 1u8 } else { 0u8 }).wrapping_shl(a.1)
+      (a.0 as u8) << a.1
     }).reduce(|a, b| {
       a | b
     }).unwrap()
   }
 
-  fn get_bit(&self, bit: u32) -> bool {
-    self.wrapping_shr(bit) & 0x01 == 0x01
+  fn get_bit(&self, bit: u8) -> bool {
+    (self & (1u8 << bit)) != 0
+  }
+
+  fn set_bit(&self, bit: u8) -> Self {
+    self | (1u8 << bit)
+  }
+
+  fn reset_bit(&self, bit: u8) -> Self {
+    self & !(1u8 << bit)
   }
 }
 
 impl BitUtil for u16 {
-  fn compose(bits: &[(bool, u32)]) -> Self {
+  fn compose(bits: &[(bool, u8)]) -> Self {
     bits.iter().map(|a| {
-      (if a.0 { 1u16 } else { 0u16 }).wrapping_shl(a.1)
+      (a.0 as u16) << a.1
     }).reduce(|a, b| {
       a | b
     }).unwrap()
   }
 
-  fn get_bit(&self, bit: u32) -> bool {
-    self.wrapping_shr(bit) & 0x0001 == 0x0001
+  fn get_bit(&self, bit: u8) -> bool {
+    (self & (1u16 << bit)) != 0
+  }
+
+  fn set_bit(&self, bit: u8) -> Self {
+    self | (1u16 << bit)
+  }
+
+  fn reset_bit(&self, bit: u8) -> Self {
+    self & !(1u16 << bit)
+  }
+}
+
+impl BitUtil for usize {
+  fn compose(bits: &[(bool, u8)]) -> Self {
+    bits.iter().map(|a| {
+      (a.0 as usize) << a.1
+    }).reduce(|a, b| {
+      a | b
+    }).unwrap()
+  }
+
+  fn get_bit(&self, bit: u8) -> bool {
+    (self & ((1 as usize) << bit)) != 0
+
+  }
+
+  fn set_bit(&self, bit: u8) -> Self {
+    self | ((1 as usize) << bit)
+  }
+
+  fn reset_bit(&self, bit: u8) -> Self {
+    self & !((1 as usize) << bit)
   }
 }

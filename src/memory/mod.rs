@@ -3,3 +3,5 @@ pub mod memory;
 pub mod linear_memory;
 pub mod bank_memory;
 pub mod mbc;
+pub mod mbc1;
+pub mod mbc2;
