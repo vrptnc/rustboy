@@ -3,6 +3,54 @@ pub trait Memory {
   fn write(&mut self, address: usize, value: u8);
 }
 
+pub enum ROMSize {
+  KB32,
+  KB64,
+  KB128,
+  KB256,
+  KB512,
+  MB1,
+  MB2,
+  MB4,
+  MB8,
+}
+
+impl ROMSize {
+  pub fn bytes(&self) -> usize {
+    match self {
+      ROMSize::KB32 => 0x8000,
+      ROMSize::KB64 => 0x10000,
+      ROMSize::KB128 => 0x20000,
+      ROMSize::KB256 => 0x40000,
+      ROMSize::KB512 => 0x80000,
+      ROMSize::MB1 => 0x100000,
+      ROMSize::MB2 => 0x200000,
+      ROMSize::MB4 => 0x400000,
+      ROMSize::MB8 => 0x800000,
+    }
+  }
+}
+
+pub enum RAMSize {
+  NotAvailable,
+  KB8,
+  KB32,
+  KB64,
+  KB128,
+}
+
+impl RAMSize {
+  pub fn bytes(&self) -> usize {
+    match self {
+      RAMSize::NotAvailable => 0,
+      RAMSize::KB8 => 0x8000,
+      RAMSize::KB32 => 0x8000,
+      RAMSize::KB64 => 0x10000,
+      RAMSize::KB128 => 0x20000,
+    }
+  }
+}
+
 #[cfg(test)]
 pub mod test {
   use crate::memory::memory::Memory;

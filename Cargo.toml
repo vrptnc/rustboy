@@ -7,4 +7,8 @@ edition = "2021"
 byteorder = "1.4.3"
 
 [dev-dependencies]
+assert_hex = "0.2.2"
 test-case = "1.2.1"
+
+[features]
+
