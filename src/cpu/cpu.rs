@@ -1,5 +1,6 @@
 use std::ops::{BitAnd, Shr};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use crate::context::context::Context;
 use crate::cpu::alu::ALU;
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
@@ -179,8 +180,8 @@ impl CPU {
     (&mut self.registers[register.offset()..]).write_u16::<BigEndian>(value).unwrap();
   }
 
-  pub fn execute(&mut self, memory: &mut dyn Memory) {
-    let opcode = Opcode::new(self.read_next_instruction(memory));
+  pub fn execute(&mut self, context: &mut Context) {
+    let opcode = Opcode::new(self.read_next_instruction(context.memory));
     let operation = match opcode.value() {
       0x00 => CPU::noop,
       0x01 => CPU::immediate_to_reg_pair_ld,
@@ -346,7 +347,7 @@ impl CPU {
       0xFF => CPU::restart,
       _ => panic!("Unknown opcode"),
     };
-    operation(self, opcode, memory)
+    operation(self, opcode, context.memory)
   }
 
   pub fn execute_cb(&mut self, _opcode: Opcode, memory: &mut dyn Memory) {
@@ -1167,6 +1168,7 @@ mod tests {
   use super::*;
   use crate::memory::memory::test::MockMemory;
   use test_case::test_case;
+  use crate::context::context::Context;
 
   #[test]
   fn read_register() {
@@ -1202,9 +1204,10 @@ mod tests {
   fn reg_to_reg_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
-    memory.write(0x0000, 0x45);
+    let mut context = Context::new(&mut memory);
+    context.memory.write(0x0000, 0x45);
     cpu.write_register(Register::L, 0xAB);
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::B), 0xAB);
   }
 
@@ -1212,9 +1215,10 @@ mod tests {
   fn immediate_to_reg_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
-    memory.write(0x0000, 0x06);
-    memory.write(0x0001, 0xAB);
-    cpu.execute(&mut memory);
+    let mut context = Context::new(&mut memory);
+    context.memory.write(0x0000, 0x06);
+    context.memory.write(0x0001, 0xAB);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::B), 0xAB);
   }
 
@@ -1222,10 +1226,11 @@ mod tests {
   fn indirect_to_reg_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
-    memory.write(0x0000, 0x6E);
-    memory.write(0xABCD, 0xEF);
+    let mut context = Context::new(&mut memory);
+    context.memory.write(0x0000, 0x6E);
+    context.memory.write(0xABCD, 0xEF);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::L), 0xEF);
   }
 
@@ -1233,10 +1238,11 @@ mod tests {
   fn reg_to_indirect_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
     cpu.write_register(Register::A, 0xEF);
-    memory.write(0x0000, 0x77);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x77);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), 0xEF);
   }
 
@@ -1244,10 +1250,11 @@ mod tests {
   fn immediate_to_indirect_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x36);
-    memory.write(0x0001, 0xEF);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x36);
+    context.memory.write(0x0001, 0xEF);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), 0xEF);
   }
 
@@ -1255,10 +1262,11 @@ mod tests {
   fn indirect_BC_to_reg_A_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::BC, 0xABCD);
-    memory.write(0x0000, 0x0A);
-    memory.write(0xABCD, 0x5A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x0A);
+    context.memory.write(0xABCD, 0x5A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), 0x5A);
   }
 
@@ -1266,10 +1274,11 @@ mod tests {
   fn indirect_DE_to_reg_A_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::DE, 0xABCD);
-    memory.write(0x0000, 0x1A);
-    memory.write(0xABCD, 0x5A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x1A);
+    context.memory.write(0xABCD, 0x5A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), 0x5A);
   }
 
@@ -1277,10 +1286,11 @@ mod tests {
   fn indirect_C_with_offset_to_reg_A_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::C, 0xCD);
-    memory.write(0x0000, 0xF2);
-    memory.write(0xFFCD, 0x5A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xF2);
+    context.memory.write(0xFFCD, 0x5A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), 0x5A);
   }
 
@@ -1288,10 +1298,11 @@ mod tests {
   fn reg_A_to_indirect_C_with_offset_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x5A);
     cpu.write_register(Register::C, 0xCD);
-    memory.write(0x0000, 0xE2);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xE2);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xFFCD), 0x5A);
   }
 
@@ -1299,10 +1310,11 @@ mod tests {
   fn immediate_indirect_with_offset_to_reg_A_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
-    memory.write(0x0000, 0xF0);
-    memory.write(0x0001, 0xCD);
-    memory.write(0xFFCD, 0x5A);
-    cpu.execute(&mut memory);
+    let mut context = Context::new(&mut memory);
+    context.memory.write(0x0000, 0xF0);
+    context.memory.write(0x0001, 0xCD);
+    context.memory.write(0xFFCD, 0x5A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), 0x5A);
   }
 
@@ -1310,10 +1322,11 @@ mod tests {
   fn reg_A_to_immediate_indirect_with_offset_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x5A);
-    memory.write(0x0000, 0xE0);
-    memory.write(0x0001, 0xCD);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xE0);
+    context.memory.write(0x0001, 0xCD);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xFFCD), 0x5A);
   }
 
@@ -1321,11 +1334,12 @@ mod tests {
   fn immediate_indirect_to_reg_A_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
-    memory.write(0x0000, 0xFA);
-    memory.write(0x0001, 0xCD);
-    memory.write(0x0002, 0xAB);
-    memory.write(0xABCD, 0x5A);
-    cpu.execute(&mut memory);
+    let mut context = Context::new(&mut memory);
+    context.memory.write(0x0000, 0xFA);
+    context.memory.write(0x0001, 0xCD);
+    context.memory.write(0x0002, 0xAB);
+    context.memory.write(0xABCD, 0x5A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), 0x5A);
   }
 
@@ -1333,11 +1347,12 @@ mod tests {
   fn reg_A_to_immediate_indirect_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x5A);
-    memory.write(0x0000, 0xEA);
-    memory.write(0x0001, 0xCD);
-    memory.write(0x0002, 0xAB);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xEA);
+    context.memory.write(0x0001, 0xCD);
+    context.memory.write(0x0002, 0xAB);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), 0x5A);
   }
 
@@ -1346,10 +1361,11 @@ mod tests {
   fn indirect_HL_to_reg_A_ld_and_increment() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x2A);
-    memory.write(0xABCD, 0x5A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x2A);
+    context.memory.write(0xABCD, 0x5A);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), 0x5A);
     assert_eq!(cpu.read_register_pair(Register::HL), 0xABCE);
   }
@@ -1358,10 +1374,11 @@ mod tests {
   fn indirect_HL_to_reg_A_ld_and_decrement() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x3A);
-    memory.write(0xABCD, 0x5A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x3A);
+    context.memory.write(0xABCD, 0x5A);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), 0x5A);
     assert_eq!(cpu.read_register_pair(Register::HL), 0xABCC);
   }
@@ -1370,10 +1387,11 @@ mod tests {
   fn reg_A_to_indirect_BC_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x5A);
     cpu.write_register_pair(Register::BC, 0xABCD);
-    memory.write(0x0000, 0x02);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x02);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), 0x5A);
   }
 
@@ -1381,10 +1399,11 @@ mod tests {
   fn reg_A_to_indirect_DE_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x5A);
     cpu.write_register_pair(Register::DE, 0xABCD);
-    memory.write(0x0000, 0x12);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x12);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), 0x5A);
   }
 
@@ -1392,10 +1411,11 @@ mod tests {
   fn reg_A_to_indirect_HL_ld_and_increment() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x5A);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x22);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x22);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), 0x5A);
     assert_eq!(cpu.read_register_pair(Register::HL), 0xABCE);
   }
@@ -1404,10 +1424,11 @@ mod tests {
   fn reg_A_to_indirect_HL_ld_and_decrement() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x5A);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x32);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x32);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), 0x5A);
     assert_eq!(cpu.read_register_pair(Register::HL), 0xABCC);
   }
@@ -1417,11 +1438,12 @@ mod tests {
   fn immediate_to_reg_pair_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x5A);
-    memory.write(0x0000, 0x21);
-    memory.write(0x0001, 0x5A);
-    memory.write(0x0002, 0x7B);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x21);
+    context.memory.write(0x0001, 0x5A);
+    context.memory.write(0x0002, 0x7B);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::HL), 0x7B5A);
   }
 
@@ -1429,9 +1451,10 @@ mod tests {
   fn reg_HL_to_reg_SP_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xF9);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xF9);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::SP), 0xABCD);
   }
 
@@ -1439,10 +1462,11 @@ mod tests {
   fn push_reg_pair_to_stack() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, 0xFFFE);
     cpu.write_register_pair(Register::DE, 0xABCD);
-    memory.write(0x0000, 0xD5);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xD5);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xFFFE), 0xAB);
     assert_eq!(memory.read(0xFFFD), 0xCD);
     assert_eq!(cpu.read_register_pair(Register::SP), 0xFFFC);
@@ -1452,11 +1476,12 @@ mod tests {
   fn pop_stack_to_reg_pair() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, 0xFFFC);
-    memory.write(0x0000, 0xD1);
-    memory.write(0xFFFC, 0xCD);
-    memory.write(0xFFFD, 0xAB);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xD1);
+    context.memory.write(0xFFFC, 0xCD);
+    context.memory.write(0xFFFD, 0xAB);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::DE), 0xABCD);
     assert_eq!(cpu.read_register_pair(Register::SP), 0xFFFE);
   }
@@ -1465,11 +1490,12 @@ mod tests {
   fn reg_SP_plus_signed_immediate_to_HL_ld_writes_correct_result() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     // Check if carry flag is set correctly
     cpu.write_register_pair(Register::SP, 0x0005);
-    memory.write(0x0000, 0xF8);
-    memory.write(0x0001, 0xFD);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xF8);
+    context.memory.write(0x0001, 0xFD);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::HL), 0x0002);
   }
 
@@ -1479,10 +1505,11 @@ mod tests {
   fn reg_SP_plus_signed_immediate_to_HL_ld_writes_correct_flags(sp: u16, e: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, sp);
-    memory.write(0x0000, 0xF8);
-    memory.write(0x0001, e);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xF8);
+    context.memory.write(0x0001, e);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
@@ -1490,11 +1517,12 @@ mod tests {
   fn reg_SP_to_immediate_indirect_ld() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, 0x7B5A);
-    memory.write(0x0000, 0x08);
-    memory.write(0x0001, 0xCD);
-    memory.write(0x0002, 0xAB);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x08);
+    context.memory.write(0x0001, 0xCD);
+    context.memory.write(0x0002, 0xAB);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), 0x5A);
     assert_eq!(memory.read(0xABCE), 0x7B);
   }
@@ -1505,10 +1533,11 @@ mod tests {
   fn add_reg_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0x82);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x82);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1519,10 +1548,11 @@ mod tests {
   fn add_immediate_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
-    memory.write(0x0000, 0xC6);
-    memory.write(0x0001, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xC6);
+    context.memory.write(0x0001, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1533,11 +1563,12 @@ mod tests {
   fn add_indirect_HL_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x86);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x86);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1548,11 +1579,12 @@ mod tests {
   fn add_reg_with_carry_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, 0x10);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0x8A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x8A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1563,12 +1595,13 @@ mod tests {
   fn add_immediate_with_carry_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::F, 0x10);
 
-    memory.write(0x0000, 0xCE);
-    memory.write(0x0001, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCE);
+    context.memory.write(0x0001, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1579,13 +1612,14 @@ mod tests {
   fn add_indirect_HL_with_carry_to_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::F, 0x10);
 
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x8E);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x8E);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1596,10 +1630,11 @@ mod tests {
   fn subtract_reg_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0x92);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x92);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1610,10 +1645,11 @@ mod tests {
   fn subtract_immediate_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
-    memory.write(0x0000, 0xD6);
-    memory.write(0x0001, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xD6);
+    context.memory.write(0x0001, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1624,11 +1660,12 @@ mod tests {
   fn subtract_indirect_HL_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x96);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x96);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1639,11 +1676,12 @@ mod tests {
   fn subtract_reg_with_carry_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, 0x10);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0x9A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x9A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1654,12 +1692,13 @@ mod tests {
   fn subtract_immediate_with_carry_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::F, 0x10);
 
-    memory.write(0x0000, 0xDE);
-    memory.write(0x0001, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xDE);
+    context.memory.write(0x0001, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1670,13 +1709,14 @@ mod tests {
   fn subtract_indirect_HL_with_carry_from_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::F, 0x10);
 
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x9E);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x9E);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1686,10 +1726,11 @@ mod tests {
   fn and_reg_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0xA2);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xA2);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1699,12 +1740,13 @@ mod tests {
   fn and_immediate_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::F, 0x10);
 
-    memory.write(0x0000, 0xE6);
-    memory.write(0x0001, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xE6);
+    context.memory.write(0x0001, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1714,13 +1756,14 @@ mod tests {
   fn and_indirect_HL_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::F, 0x10);
 
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xA6);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xA6);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1730,10 +1773,11 @@ mod tests {
   fn or_reg_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0xB2);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xB2);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1743,12 +1787,13 @@ mod tests {
   fn or_immediate_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::F, 0x10);
 
-    memory.write(0x0000, 0xF6);
-    memory.write(0x0001, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xF6);
+    context.memory.write(0x0001, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1758,13 +1803,14 @@ mod tests {
   fn or_indirect_HL_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::F, 0x10);
 
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xB6);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xB6);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1774,10 +1820,11 @@ mod tests {
   fn xor_reg_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0xAA);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xAA);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1787,12 +1834,13 @@ mod tests {
   fn xor_immediate_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::F, 0x10);
 
-    memory.write(0x0000, 0xEE);
-    memory.write(0x0001, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xEE);
+    context.memory.write(0x0001, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1802,13 +1850,14 @@ mod tests {
   fn xor_indirect_HL_with_reg_A_and_write_to_reg_A(a: u8, value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::F, 0x10);
 
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xAE);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xAE);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1819,10 +1868,11 @@ mod tests {
   fn compare_reg_with_reg_A(a: u8, value: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0xBA);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xBA);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
@@ -1832,10 +1882,11 @@ mod tests {
   fn compare_immediate_with_reg_A(a: u8, value: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
-    memory.write(0x0000, 0xFE);
-    memory.write(0x0001, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xFE);
+    context.memory.write(0x0001, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
@@ -1845,11 +1896,12 @@ mod tests {
   fn compare_indirect_HL_with_reg_A(a: u8, value: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, a);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xBE);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xBE);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::F), f);
   }
 
@@ -1858,10 +1910,11 @@ mod tests {
   fn increment_reg(value: u8, result: u8, f_old: u8, f_new: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, f_old);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0x14);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x14);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::D), result);
     assert_eq!(cpu.read_register(Register::F), f_new);
   }
@@ -1871,11 +1924,12 @@ mod tests {
   fn increment_indirect_HL(value: u8, result: u8, f_old: u8, f_new: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, f_old);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x34);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x34);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), result);
     assert_eq!(cpu.read_register(Register::F), f_new);
   }
@@ -1885,10 +1939,11 @@ mod tests {
   fn decrement_reg(value: u8, result: u8, f_old: u8, f_new: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, f_old);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0x15);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x15);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::D), result);
     assert_eq!(cpu.read_register(Register::F), f_new);
   }
@@ -1898,11 +1953,12 @@ mod tests {
   fn decrement_indirect_HL(value: u8, result: u8, f_old: u8, f_new: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, f_old);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0x35);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x35);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), result);
     assert_eq!(cpu.read_register(Register::F), f_new);
   }
@@ -1912,11 +1968,12 @@ mod tests {
   fn add_reg_pair_to_reg_HL(hl: u16, value: u16, result: u16, f_old: u8, f_new: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, f_old);
     cpu.write_register_pair(Register::HL, hl);
     cpu.write_register_pair(Register::DE, value);
-    memory.write(0x0000, 0x19);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x19);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::HL), result);
     assert_eq!(cpu.read_register(Register::F), f_new);
   }
@@ -1926,10 +1983,11 @@ mod tests {
   fn add_immediate_to_reg_SP(sp: u16, value: u8, result: u16, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, sp);
-    memory.write(0x0000, 0xE8);
-    memory.write(0x0001, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xE8);
+    context.memory.write(0x0001, value);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::SP), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1939,10 +1997,11 @@ mod tests {
   fn increment_reg_pair(sp: u16, result: u16) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, 0xF0);
     cpu.write_register_pair(Register::SP, sp);
-    memory.write(0x0000, 0x33);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x33);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::SP), result);
     assert_eq!(cpu.read_register(Register::F), 0xF0);
   }
@@ -1952,10 +2011,11 @@ mod tests {
   fn decrement_reg_pair(sp: u16, result: u16) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, 0xF0);
     cpu.write_register_pair(Register::SP, sp);
-    memory.write(0x0000, 0x3B);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x3B);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::SP), result);
     assert_eq!(cpu.read_register(Register::F), 0xF0);
   }
@@ -1964,9 +2024,10 @@ mod tests {
   fn rotate_reg_a_left() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0xCA);
-    memory.write(0x0000, 0x07);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x07);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), 0x95);
     assert_eq!(cpu.read_register(Register::F), 0x10);
   }
@@ -1976,10 +2037,11 @@ mod tests {
   fn rotate_reg_left(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x02);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x02);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::D), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -1989,11 +2051,12 @@ mod tests {
   fn rotate_indirect_hl_left(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x06);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x06);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2002,9 +2065,10 @@ mod tests {
   fn rotate_reg_a_right() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x53);
-    memory.write(0x0000, 0x0F);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x0F);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), 0xA9);
     assert_eq!(cpu.read_register(Register::F), 0x10);
   }
@@ -2014,10 +2078,11 @@ mod tests {
   fn rotate_reg_right(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x0A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x0A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::D), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2028,11 +2093,12 @@ mod tests {
   fn rotate_indirect_hl_right(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x0E);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x0E);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2041,10 +2107,11 @@ mod tests {
   fn rotate_reg_a_left_through_carry() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x4A);
     cpu.write_register(Register::F, 0x10);
-    memory.write(0x0000, 0x17);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x17);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), 0x95);
     assert_eq!(cpu.read_register(Register::F), 0x00);
   }
@@ -2054,11 +2121,12 @@ mod tests {
   fn rotate_reg_left_through_carry(value: u8, result: u8, old_f: u8, new_f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::D, value);
     cpu.write_register(Register::F, old_f);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x12);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x12);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::D), result);
     assert_eq!(cpu.read_register(Register::F), new_f);
   }
@@ -2068,12 +2136,13 @@ mod tests {
   fn rotate_indirect_hl_left_through_carry(value: u8, result: u8, old_f: u8, new_f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
     cpu.write_register(Register::F, old_f);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x16);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x16);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), result);
     assert_eq!(cpu.read_register(Register::F), new_f);
   }
@@ -2082,10 +2151,11 @@ mod tests {
   fn rotate_reg_a_right_through_carry() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0x52);
     cpu.write_register(Register::F, 0x10);
-    memory.write(0x0000, 0x1F);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x1F);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::A), 0xA9);
     assert_eq!(cpu.read_register(Register::F), 0x00);
   }
@@ -2095,11 +2165,12 @@ mod tests {
   fn rotate_reg_right_through_carry(value: u8, result: u8, old_f: u8, new_f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::D, 0x52);
     cpu.write_register(Register::F, 0x10);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x1A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x1A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::D), 0xA9);
     assert_eq!(cpu.read_register(Register::F), 0x00);
   }
@@ -2109,12 +2180,13 @@ mod tests {
   fn rotate_indirect_hl_right_through_carry(value: u8, result: u8, old_f: u8, new_f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
     cpu.write_register(Register::F, old_f);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x1E);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x1E);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), result);
     assert_eq!(cpu.read_register(Register::F), new_f);
   }
@@ -2124,10 +2196,11 @@ mod tests {
   fn shift_reg_left(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x22);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x22);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::D), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2137,11 +2210,12 @@ mod tests {
   fn shift_indirect_hl_left(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x26);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x26);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2151,10 +2225,11 @@ mod tests {
   fn shift_reg_right(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x3A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x3A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::D), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2164,11 +2239,12 @@ mod tests {
   fn shift_indirect_hl_right(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x3E);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x3E);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2178,10 +2254,11 @@ mod tests {
   fn shift_reg_right_arithmetic(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x2A);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x2A);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::D), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2191,11 +2268,12 @@ mod tests {
   fn shift_indirect_hl_right_arithmetic(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x2E);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x2E);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2205,10 +2283,11 @@ mod tests {
   fn swap_reg(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::D, value);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x32);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x32);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::D), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2218,11 +2297,12 @@ mod tests {
   fn swap_indirect_hl(value: u8, result: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xCB);
-    memory.write(0x0001, 0x36);
-    memory.write(0xABCD, value);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xCB);
+    context.memory.write(0x0001, 0x36);
+    context.memory.write(0xABCD, value);
+    cpu.execute(&mut context);
     assert_eq!(memory.read(0xABCD), result);
     assert_eq!(cpu.read_register(Register::F), f);
   }
@@ -2231,11 +2311,12 @@ mod tests {
   fn get_reg_bit() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::D, 0xA5);
     let bits: Vec<(bool, u8)> = (0u8..8u8).map(|bit| {
-      memory.write(2 * (bit as usize), 0xCB);
-      memory.write(2 * (bit as usize) + 1, 0x42 | (bit << 3));
-      cpu.execute(&mut memory);
+      context.memory.write(2 * (bit as usize), 0xCB);
+      context.memory.write(2 * (bit as usize) + 1, 0x42 | (bit << 3));
+      cpu.execute(&mut context);
       (!cpu.read_register(Register::F).get_bit(7), bit)
     }).collect();
     let result = u8::compose(&bits);
@@ -2247,12 +2328,13 @@ mod tests {
   fn get_indirect_hl_bit() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0xABCD, 0xA5);
+    context.memory.write(0xABCD, 0xA5);
     let bits: Vec<(bool, u8)> = (0u8..8u8).map(|bit| {
-      memory.write(2 * (bit as usize), 0xCB);
-      memory.write(2 * (bit as usize) + 1, 0x46 | (bit << 3));
-      cpu.execute(&mut memory);
+      context.memory.write(2 * (bit as usize), 0xCB);
+      context.memory.write(2 * (bit as usize) + 1, 0x46 | (bit << 3));
+      cpu.execute(&mut context);
       (!cpu.read_register(Register::F).get_bit(7), bit)
     }).collect();
     let result = u8::compose(&bits);
@@ -2264,11 +2346,12 @@ mod tests {
   fn set_reg_bit() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, 0xB0);
     [0, 2, 5, 7].iter().enumerate().for_each(|(index, bit)| {
-      memory.write(2 * (index as usize), 0xCB);
-      memory.write(2 * (index as usize) + 1, 0xC2 | (bit << 3));
-      cpu.execute(&mut memory);
+      context.memory.write(2 * (index as usize), 0xCB);
+      context.memory.write(2 * (index as usize) + 1, 0xC2 | (bit << 3));
+      cpu.execute(&mut context);
     });
     assert_eq!(cpu.read_register(Register::D), 0xA5);
     assert_eq!(cpu.read_register(Register::F), 0xB0);
@@ -2278,12 +2361,13 @@ mod tests {
   fn set_indirect_hl_bit() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
     cpu.write_register(Register::F, 0xB0);
     [0, 2, 5, 7].iter().enumerate().for_each(|(index, bit)| {
-      memory.write(2 * (index as usize), 0xCB);
-      memory.write(2 * (index as usize) + 1, 0xC6 | (bit << 3));
-      cpu.execute(&mut memory);
+      context.memory.write(2 * (index as usize), 0xCB);
+      context.memory.write(2 * (index as usize) + 1, 0xC6 | (bit << 3));
+      cpu.execute(&mut context);
     });
     assert_eq!(memory.read(0xABCD), 0xA5);
     assert_eq!(cpu.read_register(Register::F), 0xB0);
@@ -2293,12 +2377,13 @@ mod tests {
   fn reset_reg_bit() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::D, 0xFF);
     cpu.write_register(Register::F, 0xB0);
     [1, 3, 4, 6].iter().enumerate().for_each(|(index, bit)| {
-      memory.write(2 * (index as usize), 0xCB);
-      memory.write(2 * (index as usize) + 1, 0x82 | (bit << 3));
-      cpu.execute(&mut memory);
+      context.memory.write(2 * (index as usize), 0xCB);
+      context.memory.write(2 * (index as usize) + 1, 0x82 | (bit << 3));
+      cpu.execute(&mut context);
     });
     assert_eq!(cpu.read_register(Register::D), 0xA5);
     assert_eq!(cpu.read_register(Register::F), 0xB0);
@@ -2308,13 +2393,14 @@ mod tests {
   fn reset_indirect_hl_bit() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0xABCD, 0xFF);
+    context.memory.write(0xABCD, 0xFF);
     cpu.write_register(Register::F, 0xB0);
     [1, 3, 4, 6].iter().enumerate().for_each(|(index, bit)| {
-      memory.write(2 * (index as usize), 0xCB);
-      memory.write(2 * (index as usize) + 1, 0x86 | (bit << 3));
-      cpu.execute(&mut memory);
+      context.memory.write(2 * (index as usize), 0xCB);
+      context.memory.write(2 * (index as usize) + 1, 0x86 | (bit << 3));
+      cpu.execute(&mut context);
     });
     assert_eq!(memory.read(0xABCD), 0xA5);
     assert_eq!(cpu.read_register(Register::F), 0xB0);
@@ -2324,10 +2410,11 @@ mod tests {
   fn jump() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
-    memory.write(0x0000, 0xC3);
-    memory.write(0x0001, 0xCD);
-    memory.write(0x0002, 0xAB);
-    cpu.execute(&mut memory);
+    let mut context = Context::new(&mut memory);
+    context.memory.write(0x0000, 0xC3);
+    context.memory.write(0x0001, 0xCD);
+    context.memory.write(0x0002, 0xAB);
+    cpu.execute(&mut context);
 
     assert_eq!(cpu.read_register_pair(Register::PC), 0xABCD);
   }
@@ -2339,18 +2426,19 @@ mod tests {
   fn jump_conditional(condition: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, !f);
-    memory.write(0x0000, 0xC2 | (condition << 3));
-    memory.write(0x0001, 0xCD);
-    memory.write(0x0002, 0xAB);
-    memory.write(0x0003, 0xC2 | (condition << 3));
-    memory.write(0x0004, 0xCD);
-    memory.write(0x0005, 0xAB);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xC2 | (condition << 3));
+    context.memory.write(0x0001, 0xCD);
+    context.memory.write(0x0002, 0xAB);
+    context.memory.write(0x0003, 0xC2 | (condition << 3));
+    context.memory.write(0x0004, 0xCD);
+    context.memory.write(0x0005, 0xAB);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::PC), 0x0003);
 
     cpu.write_register(Register::F, f);
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
 
     assert_eq!(cpu.read_register_pair(Register::PC), 0xABCD);
   }
@@ -2359,12 +2447,13 @@ mod tests {
   fn jump_relative() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
-    memory.write(0x0000, 0x18);
-    memory.write(0x0001, 0x08);
-    memory.write(0x000A, 0x18);
-    memory.write(0x000B, 0xFC);
-    cpu.execute(&mut memory);
-    cpu.execute(&mut memory);
+    let mut context = Context::new(&mut memory);
+    context.memory.write(0x0000, 0x18);
+    context.memory.write(0x0001, 0x08);
+    context.memory.write(0x000A, 0x18);
+    context.memory.write(0x000B, 0xFC);
+    cpu.execute(&mut context);
+    cpu.execute(&mut context);
 
     assert_eq!(cpu.read_register_pair(Register::PC), 0x0008);
   }
@@ -2376,16 +2465,17 @@ mod tests {
   fn jump_conditional_relative(condition: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, !f);
-    memory.write(0x0000, 0x20 | (condition << 3));
-    memory.write(0x0001, 0x08);
-    memory.write(0x0002, 0x20 | (condition << 3));
-    memory.write(0x0003, 0x08);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x20 | (condition << 3));
+    context.memory.write(0x0001, 0x08);
+    context.memory.write(0x0002, 0x20 | (condition << 3));
+    context.memory.write(0x0003, 0x08);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::PC), 0x0002);
 
     cpu.write_register(Register::F, f);
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::PC), 0x000C);
   }
 
@@ -2393,9 +2483,10 @@ mod tests {
   fn jump_indirect_hl() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::HL, 0xABCD);
-    memory.write(0x0000, 0xE9);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xE9);
+    cpu.execute(&mut context);
 
     assert_eq!(cpu.read_register_pair(Register::PC), 0xABCD);
   }
@@ -2404,12 +2495,13 @@ mod tests {
   fn call() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, 0xFFFE);
     cpu.write_register_pair(Register::PC, 0x1234);
-    memory.write(0x1234, 0xCD);
-    memory.write(0x1235, 0xCD);
-    memory.write(0x1236, 0xAB);
-    cpu.execute(&mut memory);
+    context.memory.write(0x1234, 0xCD);
+    context.memory.write(0x1235, 0xCD);
+    context.memory.write(0x1236, 0xAB);
+    cpu.execute(&mut context);
 
     assert_eq!(cpu.read_register_pair(Register::SP), 0xFFFC);
     assert_eq!(memory.read(0xFFFD), 0x12);
@@ -2424,21 +2516,22 @@ mod tests {
   fn call_conditional(condition: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, 0xFFFE);
     cpu.write_register_pair(Register::PC, 0x1234);
     cpu.write_register(Register::F, !f);
-    memory.write(0x1234, 0xC4 | (condition << 3));
-    memory.write(0x1235, 0xCD);
-    memory.write(0x1236, 0xAB);
-    memory.write(0x1237, 0xC4 | (condition << 3));
-    memory.write(0x1238, 0xCD);
-    memory.write(0x1239, 0xAB);
+    context.memory.write(0x1234, 0xC4 | (condition << 3));
+    context.memory.write(0x1235, 0xCD);
+    context.memory.write(0x1236, 0xAB);
+    context.memory.write(0x1237, 0xC4 | (condition << 3));
+    context.memory.write(0x1238, 0xCD);
+    context.memory.write(0x1239, 0xAB);
 
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::PC), 0x1237);
 
     cpu.write_register(Register::F, f);
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
 
     assert_eq!(cpu.read_register_pair(Register::PC), 0xABCD);
     assert_eq!(cpu.read_register_pair(Register::SP), 0xFFFC);
@@ -2450,16 +2543,17 @@ mod tests {
   fn return_from_call() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, 0xFFFE);
     cpu.write_register_pair(Register::PC, 0x1234);
-    memory.write(0x1234, 0xCD);
-    memory.write(0x1235, 0xCD);
-    memory.write(0x1236, 0xAB);
-    memory.write(0xABCD, 0xC9);
-    cpu.execute(&mut memory);
+    context.memory.write(0x1234, 0xCD);
+    context.memory.write(0x1235, 0xCD);
+    context.memory.write(0x1236, 0xAB);
+    context.memory.write(0xABCD, 0xC9);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::PC), 0xABCD);
 
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::PC), 0x1237);
     assert_eq!(cpu.read_register_pair(Register::SP), 0xFFFE);
   }
@@ -2468,20 +2562,21 @@ mod tests {
   fn return_from_interrupt() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, 0xFFFE);
     cpu.write_register_pair(Register::PC, 0x1234);
-    memory.write(0x1234, 0xCD);
-    memory.write(0x1235, 0xCD);
-    memory.write(0x1236, 0xAB);
-    memory.write(0xABCD, 0xF3);
-    memory.write(0xABCE, 0xD9);
-    cpu.execute(&mut memory);
+    context.memory.write(0x1234, 0xCD);
+    context.memory.write(0x1235, 0xCD);
+    context.memory.write(0x1236, 0xAB);
+    context.memory.write(0xABCD, 0xF3);
+    context.memory.write(0xABCE, 0xD9);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::PC), 0xABCD);
 
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.ime, false);
 
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.ime, true);
     assert_eq!(cpu.read_register_pair(Register::PC), 0x1237);
     assert_eq!(cpu.read_register_pair(Register::SP), 0xFFFE);
@@ -2494,22 +2589,23 @@ mod tests {
   fn return_conditionally(condition: u8, f: u8) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, 0xFFFE);
     cpu.write_register_pair(Register::PC, 0x1234);
-    memory.write(0x1234, 0xCD);
-    memory.write(0x1235, 0xCD);
-    memory.write(0x1236, 0xAB);
-    memory.write(0xABCD, 0xC0 | (condition << 3));
-    memory.write(0xABCE, 0xC0 | (condition << 3));
-    cpu.execute(&mut memory);
+    context.memory.write(0x1234, 0xCD);
+    context.memory.write(0x1235, 0xCD);
+    context.memory.write(0x1236, 0xAB);
+    context.memory.write(0xABCD, 0xC0 | (condition << 3));
+    context.memory.write(0xABCE, 0xC0 | (condition << 3));
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::PC), 0xABCD);
 
     cpu.write_register(Register::F, !f);
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::PC), 0xABCE);
 
     cpu.write_register(Register::F, f);
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register_pair(Register::PC), 0x1237);
     assert_eq!(cpu.read_register_pair(Register::SP), 0xFFFE);
   }
@@ -2525,10 +2621,11 @@ mod tests {
   fn restart(operand: u8, address: u16) {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register_pair(Register::SP, 0xFFFE);
     cpu.write_register_pair(Register::PC, 0x1234);
-    memory.write(0x1234, 0xC7 | (operand << 3));
-    cpu.execute(&mut memory);
+    context.memory.write(0x1234, 0xC7 | (operand << 3));
+    cpu.execute(&mut context);
 
     assert_eq!(cpu.read_register_pair(Register::SP), 0xFFFC);
     assert_eq!(memory.read(0xFFFD), 0x12);
@@ -2540,6 +2637,7 @@ mod tests {
   fn decimal_adjust_reg_a() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     let mut instruction_index: usize = 0;
     (0u8..99u8).for_each(|x| {
       (0u8..99u8).for_each(|y| {
@@ -2550,12 +2648,12 @@ mod tests {
 
         cpu.write_register(Register::A, a);
         cpu.write_register(Register::D, d);
-        memory.write(instruction_index, 0x82);
+        context.memory.write(instruction_index, 0x82);
         instruction_index += 1;
-        cpu.execute(&mut memory);
-        memory.write(instruction_index, 0x27);
+        cpu.execute(&mut context);
+        context.memory.write(instruction_index, 0x27);
         instruction_index += 1;
-        cpu.execute(&mut memory);
+        cpu.execute(&mut context);
         let result_bcd_sum = cpu.read_register(Register::A);
         let result_decimal_sum = ((result_bcd_sum & 0xF0) >> 4) * 10 + (result_bcd_sum & 0x0F);
         assert_eq!(result_decimal_sum, sum % 100);
@@ -2564,12 +2662,12 @@ mod tests {
 
         cpu.write_register(Register::A, a);
         cpu.write_register(Register::D, d);
-        memory.write(instruction_index, 0x92);
+        context.memory.write(instruction_index, 0x92);
         instruction_index += 1;
-        cpu.execute(&mut memory);
-        memory.write(instruction_index, 0x27);
+        cpu.execute(&mut context);
+        context.memory.write(instruction_index, 0x27);
         instruction_index += 1;
-        cpu.execute(&mut memory);
+        cpu.execute(&mut context);
         let result_bcd_diff = cpu.read_register(Register::A);
         let result_decimal_diff = ((result_bcd_diff & 0xF0) >> 4) * 10 + (result_bcd_diff & 0x0F);
         let f = u8::compose(&[(difference % 100 == 0, 7), (difference < 100, 4)]);
@@ -2583,10 +2681,11 @@ mod tests {
   fn ones_complement_reg_a() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::A, 0xA6);
     cpu.write_register(Register::F, 0x90);
-    memory.write(0x0000, 0x2F);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x2F);
+    cpu.execute(&mut context);
 
     assert_eq!(cpu.read_register(Register::A), 0x59);
     assert_eq!(cpu.read_register(Register::F), 0xF0);
@@ -2596,12 +2695,13 @@ mod tests {
   fn flip_carry() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, 0x80);
-    memory.write(0x0000, 0x3F);
-    memory.write(0x0001, 0x3F);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x3F);
+    context.memory.write(0x0001, 0x3F);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::F), 0x90);
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::F), 0x80);
 
   }
@@ -2610,12 +2710,13 @@ mod tests {
   fn set_carry() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.write_register(Register::F, 0x80);
-    memory.write(0x0000, 0x37);
-    memory.write(0x0000, 0x37);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0x37);
+    context.memory.write(0x0000, 0x37);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::F), 0x90);
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::F), 0x90);
   }
 
@@ -2623,12 +2724,13 @@ mod tests {
   fn disable_enable_interrupts() {
     let mut cpu = CPU::new();
     let mut memory = MockMemory::new();
+    let mut context = Context::new(&mut memory);
     cpu.ime = true;
-    memory.write(0x0000, 0xF3);
-    memory.write(0x0001, 0xFB);
-    cpu.execute(&mut memory);
+    context.memory.write(0x0000, 0xF3);
+    context.memory.write(0x0001, 0xFB);
+    cpu.execute(&mut context);
     assert_eq!(cpu.ime, false);
-    cpu.execute(&mut memory);
+    cpu.execute(&mut context);
     assert_eq!(cpu.ime, true);
   }
 }

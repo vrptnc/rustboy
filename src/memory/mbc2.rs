@@ -1,6 +1,5 @@
-use crate::memory::bank_memory::BankMemory;
 use crate::memory::mbc::Loadable;
-use crate::memory::memory::{Memory, RAMSize, ROMSize};
+use crate::memory::memory::{Memory, ROMSize};
 use crate::util::bit_util::BitUtil;
 
 struct MBC2 {
