@@ -1,6 +1,6 @@
 use std::ops::{BitAnd, Shr};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use crate::context::context::Context;
+use crate::context::context::{Context, Executable};
 use crate::cpu::alu::ALU;
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
@@ -129,58 +129,8 @@ struct CPU {
   ime: bool,
 }
 
-
-impl CPU {
-  fn new() -> CPU {
-    CPU {
-      registers: [0; 12],
-      ime: true,
-    }
-  }
-
-  fn read_and_increment_register_pair(&mut self, register: Register) -> u16 {
-    let value = self.read_register_pair(register);
-    self.write_register_pair(register, value + 1);
-    value
-  }
-
-  fn read_and_decrement_register_pair(&mut self, register: Register) -> u16 {
-    let value = self.read_register_pair(register);
-    self.write_register_pair(register, value - 1);
-    value
-  }
-
-  fn decrement_and_read_register_pair(&mut self, register: Register) -> u16 {
-    let value = self.read_register_pair(register) - 1;
-    self.write_register_pair(register, value);
-    value
-  }
-
-  pub fn read_next_instruction(&mut self, memory: &dyn Memory) -> u8 {
-    memory.read(self.read_and_increment_register_pair(Register::PC) as usize)
-  }
-
-  pub fn read_register(&self, register: Register) -> u8 {
-    self.registers[register.offset()]
-  }
-
-  pub fn read_register_pair(&self, register: Register) -> u16 {
-    (&self.registers[register.offset()..]).read_u16::<BigEndian>().unwrap()
-  }
-
-  pub fn write_register(&mut self, register: Register, value: u8) {
-    self.registers[register.offset()] = value;
-  }
-
-  pub fn write_register_masked(&mut self, register: Register, value: u8, mask: u8) {
-    self.registers[register.offset()] = (!mask & self.registers[register.offset()]) | (mask & value);
-  }
-
-  pub fn write_register_pair(&mut self, register: Register, value: u16) {
-    (&mut self.registers[register.offset()..]).write_u16::<BigEndian>(value).unwrap();
-  }
-
-  pub fn execute(&mut self, context: &mut Context) {
+impl Executable for CPU {
+  fn execute(&mut self, context: &mut Context) {
     let opcode = Opcode::new(self.read_next_instruction(context.memory));
     let operation = match opcode.value() {
       0x00 => CPU::noop,
@@ -348,6 +298,58 @@ impl CPU {
       _ => panic!("Unknown opcode"),
     };
     operation(self, opcode, context.memory)
+  }
+}
+
+
+impl CPU {
+  fn new() -> CPU {
+    CPU {
+      registers: [0; 12],
+      ime: true,
+    }
+  }
+
+  fn read_and_increment_register_pair(&mut self, register: Register) -> u16 {
+    let value = self.read_register_pair(register);
+    self.write_register_pair(register, value + 1);
+    value
+  }
+
+  fn read_and_decrement_register_pair(&mut self, register: Register) -> u16 {
+    let value = self.read_register_pair(register);
+    self.write_register_pair(register, value - 1);
+    value
+  }
+
+  fn decrement_and_read_register_pair(&mut self, register: Register) -> u16 {
+    let value = self.read_register_pair(register) - 1;
+    self.write_register_pair(register, value);
+    value
+  }
+
+  pub fn read_next_instruction(&mut self, memory: &dyn Memory) -> u8 {
+    memory.read(self.read_and_increment_register_pair(Register::PC) as usize)
+  }
+
+  pub fn read_register(&self, register: Register) -> u8 {
+    self.registers[register.offset()]
+  }
+
+  pub fn read_register_pair(&self, register: Register) -> u16 {
+    (&self.registers[register.offset()..]).read_u16::<BigEndian>().unwrap()
+  }
+
+  pub fn write_register(&mut self, register: Register, value: u8) {
+    self.registers[register.offset()] = value;
+  }
+
+  pub fn write_register_masked(&mut self, register: Register, value: u8, mask: u8) {
+    self.registers[register.offset()] = (!mask & self.registers[register.offset()]) | (mask & value);
+  }
+
+  pub fn write_register_pair(&mut self, register: Register, value: u16) {
+    (&mut self.registers[register.offset()..]).write_u16::<BigEndian>(value).unwrap();
   }
 
   pub fn execute_cb(&mut self, _opcode: Opcode, memory: &mut dyn Memory) {
@@ -2703,7 +2705,6 @@ mod tests {
     assert_eq!(cpu.read_register(Register::F), 0x90);
     cpu.execute(&mut context);
     assert_eq!(cpu.read_register(Register::F), 0x80);
-
   }
 
   #[test]

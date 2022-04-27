@@ -6,5 +6,7 @@ mod context;
 mod time;
 
 fn main() {
-    println!("Hello, world!");
+    loop {
+
+    }
 }

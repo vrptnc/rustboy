@@ -1,12 +1,13 @@
+use crate::context::context::{Context, Executable};
 use crate::time::duration::Duration;
-use crate::time::time::TimingAware;
 
 pub struct Timer {
+  total: Duration,
 
 }
 
-impl TimingAware for Timer {
-  fn tick(&mut self, delta: Duration) {
+impl Executable for Timer {
+  fn execute(&mut self, context: &mut Context) {
 
   }
 }
