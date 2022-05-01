@@ -124,7 +124,7 @@ impl Register {
   }
 }
 
-struct CPU {
+pub struct CPU {
   registers: [u8; 12],
   ime: bool,
 }
@@ -303,7 +303,7 @@ impl Executable for CPU {
 
 
 impl CPU {
-  fn new() -> CPU {
+  pub fn new() -> CPU {
     CPU {
       registers: [0; 12],
       ime: true,
@@ -328,31 +328,31 @@ impl CPU {
     value
   }
 
-  pub fn read_next_instruction(&mut self, memory: &dyn Memory) -> u8 {
+  fn read_next_instruction(&mut self, memory: &dyn Memory) -> u8 {
     memory.read(self.read_and_increment_register_pair(Register::PC) as usize)
   }
 
-  pub fn read_register(&self, register: Register) -> u8 {
+  fn read_register(&self, register: Register) -> u8 {
     self.registers[register.offset()]
   }
 
-  pub fn read_register_pair(&self, register: Register) -> u16 {
+  fn read_register_pair(&self, register: Register) -> u16 {
     (&self.registers[register.offset()..]).read_u16::<BigEndian>().unwrap()
   }
 
-  pub fn write_register(&mut self, register: Register, value: u8) {
+  fn write_register(&mut self, register: Register, value: u8) {
     self.registers[register.offset()] = value;
   }
 
-  pub fn write_register_masked(&mut self, register: Register, value: u8, mask: u8) {
+  fn write_register_masked(&mut self, register: Register, value: u8, mask: u8) {
     self.registers[register.offset()] = (!mask & self.registers[register.offset()]) | (mask & value);
   }
 
-  pub fn write_register_pair(&mut self, register: Register, value: u16) {
+  fn write_register_pair(&mut self, register: Register, value: u16) {
     (&mut self.registers[register.offset()..]).write_u16::<BigEndian>(value).unwrap();
   }
 
-  pub fn execute_cb(&mut self, _opcode: Opcode, memory: &mut dyn Memory) {
+  fn execute_cb(&mut self, _opcode: Opcode, memory: &mut dyn Memory) {
     let opcode = Opcode::new(self.read_next_instruction(memory));
     let operation = match opcode.value() {
       0x00..=0x05 => CPU::rotate_reg_left,

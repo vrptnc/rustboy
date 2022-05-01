@@ -1,2 +1,2 @@
-mod cpu;
-mod alu;
+pub mod cpu;
+pub mod alu;
