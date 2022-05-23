@@ -2,7 +2,7 @@ use crate::context::context::{Context, Executable};
 use crate::time::duration::Duration;
 use crate::memory::mbc::Loadable;
 use crate::memory::memory::{Memory, RAMSize, ROMSize};
-use crate::time::time::TimingAware;
+use crate::time::time::{ClockAware, TimingAware};
 use crate::util::bit_util::BitUtil;
 
 #[derive(Copy, Clone)]
@@ -88,9 +88,9 @@ impl MBC3 {
   }
 }
 
-impl TimingAware for MBC3 {
-  fn tick(&mut self, delta: Duration) {
-    self.rtc = self.rtc.tick(delta);
+impl ClockAware for MBC3 {
+  fn tick(&mut self) {
+    self.rtc = self.rtc.tick(Duration::from_nanoseconds(1000));
   }
 }
 
@@ -302,12 +302,7 @@ mod tests {
     memory.write(0x4000, 0x0C); // Set RAM bank to RTC days high
     memory.write(0xA000, 0x01); // Write 361 days high (non-halted)
     memory.write(0x0000, 0xB); // Disable RAM
-    memory.tick(RTCDuration {
-      seconds: 42,
-      minutes: 27,
-      hours: 13,
-      days: 155,
-    }.to_duration());
+    memory.tick();
     memory.write(0x4000, 0x08); // Set RAM bank to RTC seconds
     assert_eq!(memory.read(0xA000), 56); // Read seconds
     memory.write(0x4000, 0x09); // Set RAM bank to RTC minutes

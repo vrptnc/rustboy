@@ -1,9 +1,14 @@
 use std::cmp::Ordering;
 use std::ops;
+use crate::memory::memory::Memory;
 use crate::time::duration::Duration;
 
-pub trait TimingAware {
-  fn tick(&mut self, delta: Duration);
+pub trait ClockAware {
+  fn tick(&mut self);
+}
+
+pub trait Clock {
+  fn wait(cycles: u32);
 }
 
 #[derive(Copy, Clone)]
@@ -18,7 +23,7 @@ pub enum TimeUnit {
 }
 
 impl TimeUnit {
-  pub fn to_nanoseconds(&self) -> u64 {
+  pub fn to_nanoseconds(&self) -> u128 {
     match self {
       TimeUnit::Nanoseconds => 1,
       TimeUnit::Microseconds => 1_000,
@@ -28,14 +33,6 @@ impl TimeUnit {
       TimeUnit::Hours => 3600_000_000_000,
       TimeUnit::Days => 86400_000_000_000,
     }
-  }
-
-  pub fn min(first: TimeUnit, second: TimeUnit) -> TimeUnit {
-    if first.to_nanoseconds() < second.to_nanoseconds() { first } else { second }
-  }
-
-  pub fn max(first: TimeUnit, second: TimeUnit) -> TimeUnit {
-    if first.to_nanoseconds() > second.to_nanoseconds() { first } else { second }
   }
 }
 
@@ -47,12 +44,12 @@ impl PartialEq for TimeUnit {
 
 impl PartialOrd for TimeUnit {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    let nanos = self.to_nanoseconds();
-    let other_nanos = other.to_nanoseconds();
+    let first_discriminant = std::mem::discriminant(self);
+    let second_discriminant = std::mem::discriminant(other);
     Some(
-      if nanos < other_nanos {
+      if first_discriminant < second_discriminant {
         Ordering::Less
-      } else if nanos > other_nanos {
+      } else if first_discriminant > second_discriminant {
         Ordering::Greater
       } else {
         Ordering::Equal

@@ -1,7 +1,12 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 pub trait Memory {
   fn read(&self, address: usize) -> u8;
   fn write(&mut self, address: usize, value: u8);
 }
+
+pub type MemoryRef = Rc<RefCell<dyn Memory>>;
 
 pub enum ROMSize {
   KB32,
