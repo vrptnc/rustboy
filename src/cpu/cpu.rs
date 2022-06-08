@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::ops::{BitAnd, Shr};
 use std::rc::Rc;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
@@ -68,6 +69,8 @@ pub enum Register {
   L,
   HL,
   PC,
+  S,
+  P,
   SP,
 }
 
@@ -87,6 +90,8 @@ impl Register {
       Register::L => 7,
       Register::HL => 6,
       Register::PC => 8,
+      Register::S => 10,
+      Register::P => 11,
       Register::SP => 10
     }
   }
@@ -124,10 +129,112 @@ impl Register {
       _ => panic!("{} doesn't map to a register pair", bits)
     }
   }
+
+  pub fn get_upper_register(&self) -> Register {
+    match self {
+      Register::A => Register::A,
+      Register::F => Register::F,
+      Register::AF => Register::A,
+      Register::B => Register::B,
+      Register::C => Register::C,
+      Register::BC => Register::B,
+      Register::D => Register::D,
+      Register::E => Register::E,
+      Register::DE => Register::D,
+      Register::H => Register::H,
+      Register::L => Register::L,
+      Register::HL => Register::H,
+      Register::S => Register::S,
+      Register::P => Register::P,
+      Register::SP => Register::S,
+      _ => panic!("Can't be accessed as separate registers"),
+    }
+  }
+
+  pub fn get_lower_register(&self) -> Register {
+    match self {
+      Register::A => Register::A,
+      Register::F => Register::F,
+      Register::AF => Register::F,
+      Register::B => Register::B,
+      Register::C => Register::C,
+      Register::BC => Register::C,
+      Register::D => Register::D,
+      Register::E => Register::E,
+      Register::DE => Register::E,
+      Register::H => Register::H,
+      Register::L => Register::L,
+      Register::HL => Register::L,
+      Register::S => Register::S,
+      Register::P => Register::P,
+      Register::SP => Register::P,
+      _ => panic!("Can't be accessed as separate registers"),
+    }
+  }
 }
+
+pub struct InstructionContext {
+  opcode: Opcode,
+  low_byte_buffer: u8,
+  high_byte_buffer: u8,
+  word_buffer: u16,
+  address_buffer: u16,
+  register: Register,
+}
+
+impl InstructionContext {
+  pub fn new() -> InstructionContext {
+    InstructionContext {
+      opcode: Opcode::new(0),
+      low_byte_buffer: 0,
+      high_byte_buffer: 0,
+      word_buffer: 0,
+      address_buffer: 0,
+      register: Register::A,
+    }
+  }
+}
+
+#[derive(Copy, Clone)]
+enum ByteLocation {
+  LowByteBuffer,
+  HighByteBuffer,
+  LowByteFromWordBuffer,
+  HighByteFromWordBuffer,
+  LowByteFromAddressBuffer,
+  HighByteFromAddressBuffer,
+  Register(Register),
+  MemoryAtAddressBuffer,
+  MemoryAtRegisterAddress(Register),
+  NextMemoryByte,
+}
+
+#[derive(Copy, Clone)]
+enum WordLocation {
+  WordBuffer,
+  AddressBuffer,
+  Register(Register),
+  NextMemoryWord,
+}
+
+#[derive(Copy, Clone)]
+enum Operation {
+  MoveByte { src: ByteLocation, dest: ByteLocation },
+  MoveWord { src: WordLocation, dest: WordLocation },
+  IncrementByte(ByteLocation),
+  IncrementWord(WordLocation),
+  DecrementByte(ByteLocation),
+  DecrementWord(WordLocation),
+  AddSignedByteToWord(ByteLocation, WordLocation),
+  Composite(Operation, Operation),
+}
+
+// type Operation = fn(&mut CPU);
 
 pub struct CPU {
   cycles_to_wait: u8,
+  context: InstructionContext,
+  operations: VecDeque<Operation>,
   memory: MemoryRef,
   registers: [u8; 12],
   ime: bool,
@@ -148,6 +255,8 @@ impl CPU {
   pub fn new(memory: MemoryRef) -> CPU {
     CPU {
       memory,
+      context: InstructionContext::new(),
+      operations: VecDeque::with_capacity(5),
       cycles_to_wait: 0,
       registers: [0; 12],
       ime: true,
@@ -162,13 +271,194 @@ impl CPU {
     let interrupt_enables = memory.read(0xFFFF);
     let interrupt_flags = memory.read(0xFF0F);
     let interrupts_to_process = interrupt_enables & interrupt_flags;
+  }
 
+  fn fetch_and_decode_instruction(&mut self) {
+    macro_rules! add_operations {
+        ($($x:expr),*) => {
+          {
+            $(
+              self.operations.push_back($x);
+            )*
+          }
+        };
+    }
 
+    self.context.opcode = Opcode::new(self.read_next_instruction());
+    match opcode.value() {
+      0x00 => {}
+      0x01 => self.immediate_to_reg_pair_ld(),
+      0x02 => self.reg_a_to_indirect_bc_ld(),
+      0x03 => self.increment_reg_pair(),
+      0x04 => self.increment_reg(),
+      0x05 => self.decrement_reg(),
+      0x06 => self.immediate_to_reg_ld(),
+      0x07 => self.rotate_reg_a_left(),
+      0x08 => add_operations!(CPU::read_low_from_memory, CPU::read_high_from_memory, CPU::write_reg_sp_upper_byte, CPU::write_reg_sp_lower_byte),
+      0x09 => CPU::add_reg_pair_to_reg_hl,
+      0x0A => CPU::indirect_bc_to_reg_a_ld,
+      0x0B => CPU::decrement_reg_pair,
+      0x0C => CPU::increment_reg,
+      0x0D => CPU::decrement_reg,
+      0x0E => CPU::immediate_to_reg_ld,
+      0x0F => CPU::rotate_reg_a_right,
+      0x10 => CPU::stop,
+      0x11 => CPU::immediate_to_reg_pair_ld,
+      0x12 => CPU::reg_a_to_indirect_de_ld,
+      0x13 => CPU::increment_reg_pair,
+      0x14 => CPU::increment_reg,
+      0x15 => CPU::decrement_reg,
+      0x16 => CPU::immediate_to_reg_ld,
+      0x17 => CPU::rotate_reg_a_left_through_carry,
+      0x18 => CPU::jump_relative,
+      0x19 => CPU::add_reg_pair_to_reg_hl,
+      0x1A => CPU::indirect_de_to_reg_a_ld,
+      0x1B => CPU::decrement_reg_pair,
+      0x1C => CPU::increment_reg,
+      0x1D => CPU::decrement_reg,
+      0x1E => CPU::immediate_to_reg_ld,
+      0x1F => CPU::rotate_reg_a_right_through_carry,
+      0x20 => CPU::jump_conditional_relative,
+      0x21 => CPU::immediate_to_reg_pair_ld,
+      0x22 => CPU::reg_a_to_indirect_hl_ld_and_increment,
+      0x23 => CPU::increment_reg_pair,
+      0x24 => CPU::increment_reg,
+      0x25 => CPU::decrement_reg,
+      0x26 => CPU::immediate_to_reg_ld,
+      0x27 => CPU::decimal_adjust_reg_a,
+      0x28 => CPU::jump_conditional_relative,
+      0x29 => CPU::add_reg_pair_to_reg_hl,
+      0x2A => CPU::indirect_hl_to_reg_a_ld_and_increment,
+      0x2B => CPU::decrement_reg_pair,
+      0x2C => CPU::increment_reg,
+      0x2D => CPU::decrement_reg,
+      0x2E => CPU::immediate_to_reg_ld,
+      0x2F => CPU::ones_complement_reg_a,
+      0x30 => CPU::jump_conditional_relative,
+      0x31 => CPU::immediate_to_reg_pair_ld,
+      0x32 => CPU::reg_a_to_indirect_hl_ld_and_decrement,
+      0x33 => CPU::increment_reg_pair,
+      0x34 => CPU::increment_indirect_hl,
+      0x35 => CPU::decrement_indirect_hl,
+      0x36 => CPU::immediate_to_indirect_ld,
+      0x37 => CPU::set_carry_flag,
+      0x38 => CPU::jump_conditional_relative,
+      0x39 => CPU::add_reg_pair_to_reg_hl,
+      0x3A => CPU::indirect_hl_to_reg_a_ld_and_decrement,
+      0x3B => CPU::decrement_reg_pair,
+      0x3C => CPU::increment_reg,
+      0x3D => CPU::decrement_reg,
+      0x3E => CPU::immediate_to_reg_ld,
+      0x3F => CPU::flip_carry_flag,
+      0x40..=0x45 => CPU::reg_to_reg_ld,
+      0x46 => CPU::indirect_to_reg_ld,
+      0x47..=0x4D => CPU::reg_to_reg_ld,
+      0x4E => CPU::indirect_to_reg_ld,
+      0x4F => CPU::reg_to_reg_ld,
+      0x50..=0x55 => CPU::reg_to_reg_ld,
+      0x56 => CPU::indirect_to_reg_ld,
+      0x57..=0x5D => CPU::reg_to_reg_ld,
+      0x5E => CPU::indirect_to_reg_ld,
+      0x5F => CPU::reg_to_reg_ld,
+      0x60..=0x65 => CPU::reg_to_reg_ld,
+      0x66 => CPU::indirect_to_reg_ld,
+      0x67..=0x6D => CPU::reg_to_reg_ld,
+      0x6E => CPU::indirect_to_reg_ld,
+      0x6F => CPU::reg_to_reg_ld,
+      0x70..=0x75 => CPU::reg_to_indirect_ld,
+      0x76 => CPU::halt,
+      0x77 => CPU::reg_to_indirect_ld,
+      0x78..=0x7D => CPU::reg_to_reg_ld,
+      0x7E => CPU::indirect_to_reg_ld,
+      0x7F => CPU::reg_to_reg_ld,
+      0x80..=0x85 => CPU::add_reg_to_reg_a_and_write_to_reg_a,
+      0x86 => CPU::add_indirect_hl_to_reg_a_and_write_to_reg_a,
+      0x87 => CPU::add_reg_to_reg_a_and_write_to_reg_a,
+      0x88..=0x8D => CPU::add_reg_with_carry_to_reg_a_and_write_to_reg_a,
+      0x8E => CPU::add_indirect_hl_with_carry_to_reg_a_and_write_to_reg_a,
+      0x8F => CPU::add_reg_with_carry_to_reg_a_and_write_to_reg_a,
+      0x90..=0x95 => CPU::subtract_reg_from_reg_a_and_write_to_reg_a,
+      0x96 => CPU::subtract_indirect_hl_from_reg_a_and_write_to_reg_a,
+      0x97 => CPU::subtract_reg_from_reg_a_and_write_to_reg_a,
+      0x98..=0x9D => CPU::subtract_reg_with_carry_from_reg_a_and_write_to_reg_a,
+      0x9E => CPU::subtract_indirect_hl_with_carry_from_reg_a_and_write_to_reg_a,
+      0x9F => CPU::subtract_reg_with_carry_from_reg_a_and_write_to_reg_a,
+      0xA0..=0xA5 => CPU::and_reg_with_reg_a_and_write_to_reg_a,
+      0xA6 => CPU::and_indirect_hl_with_reg_a_and_write_to_reg_a,
+      0xA7 => CPU::and_reg_with_reg_a_and_write_to_reg_a,
+      0xA8..=0xAD => CPU::xor_reg_with_reg_a_and_write_to_reg_a,
+      0xAE => CPU::xor_indirect_hl_with_reg_a_and_write_to_reg_a,
+      0xAF => CPU::xor_reg_with_reg_a_and_write_to_reg_a,
+      0xB0..=0xB5 => CPU::or_reg_with_reg_a_and_write_to_reg_a,
+      0xB6 => CPU::or_indirect_hl_with_reg_a_and_write_to_reg_a,
+      0xB7 => CPU::or_reg_with_reg_a_and_write_to_reg_a,
+      0xB8..=0xBD => CPU::compare_reg_with_reg_a,
+      0xBE => CPU::compare_indirect_hl_with_reg_a,
+      0xBF => CPU::compare_reg_with_reg_a,
+      0xC0 => CPU::return_conditionally,
+      0xC1 => CPU::pop_stack_to_reg_pair,
+      0xC2 => CPU::jump_conditional,
+      0xC3 => CPU::jump,
+      0xC4 => CPU::call_conditional,
+      0xC5 => CPU::push_reg_pair_to_stack,
+      0xC7 => CPU::restart,
+      0xC6 => CPU::add_immediate_to_reg_a_and_write_to_reg_a,
+      0xC8 => CPU::return_conditionally,
+      0xC9 => CPU::return_from_call,
+      0xCA => CPU::jump_conditional,
+      0xCB => CPU::execute_cb,
+      0xCC => CPU::call_conditional,
+      0xCD => CPU::call,
+      0xCE => CPU::add_immediate_with_carry_to_reg_a_and_write_to_reg_a,
+      0xCF => CPU::restart,
+      0xD0 => CPU::return_conditionally,
+      0xD1 => CPU::pop_stack_to_reg_pair,
+      0xD2 => CPU::jump_conditional,
+      0xD4 => CPU::call_conditional,
+      0xD5 => CPU::push_reg_pair_to_stack,
+      0xD6 => CPU::subtract_immediate_from_reg_a_and_write_to_reg_a,
+      0xD7 => CPU::restart,
+      0xD8 => CPU::return_conditionally,
+      0xD9 => CPU::return_from_interrupt,
+      0xDA => CPU::jump_conditional,
+      0xDC => CPU::call_conditional,
+      0xDE => CPU::subtract_immediate_with_carry_from_reg_a_and_write_to_reg_a,
+      0xDF => CPU::restart,
+      0xE0 => CPU::reg_a_to_immediate_indirect_with_offset_ld,
+      0xE1 => CPU::pop_stack_to_reg_pair,
+      0xE2 => CPU::reg_a_to_indirect_c_ld,
+      0xE5 => CPU::push_reg_pair_to_stack,
+      0xE6 => CPU::and_immediate_with_reg_a_and_write_to_reg_a,
+      0xE7 => CPU::restart,
+      0xE8 => CPU::add_immediate_to_reg_sp,
+      0xE9 => CPU::jump_to_indirect_hl,
+      0xEA => CPU::reg_a_to_immediate_indirect_ld,
+      0xEE => CPU::xor_immediate_with_reg_a_and_write_to_reg_a,
+      0xEF => CPU::restart,
+      0xF0 => CPU::immediate_indirect_with_offset_to_reg_a_ld,
+      0xF1 => CPU::pop_stack_to_reg_pair,
+      0xF2 => CPU::indirect_c_with_offset_to_reg_a_ld,
+      0xF3 => CPU::disable_interrupts,
+      0xF5 => CPU::push_reg_pair_to_stack,
+      0xF6 => CPU::or_immediate_with_reg_a_and_write_to_reg_a,
+      0xF7 => CPU::restart,
+      0xF8 => CPU::reg_sp_plus_signed_immediate_to_hl_ld,
+      0xF9 => CPU::reg_hl_to_reg_sp_ld,
+      0xFA => CPU::immediate_indirect_to_reg_a_ld,
+      0xFB => CPU::enable_interrupts,
+      0xFE => CPU::compare_immediate_with_reg_a,
+      0xFF => CPU::restart,
+      _ => panic!("Unknown opcode"),
+    };
   }
 
   fn execute_next_instruction(&mut self) {
+    let operation = self.operations.pop_front().unwrap_or(CPU::fetch_and_decode_instruction);
+    operation(self)
+
+
     let opcode = Opcode::new(self.read_next_instruction());
-    let operation = match opcode.value() {
+    match opcode.value() {
       0x00 => CPU::noop,
       0x01 => CPU::immediate_to_reg_pair_ld,
       0x02 => CPU::reg_a_to_indirect_bc_ld,
@@ -336,6 +626,68 @@ impl CPU {
     operation(self, opcode);
   }
 
+
+
+
+  fn write_low_byte_buffer_to_register(&mut self) {
+    self.registers[self.context.register.offset()] = self.context.low_byte_buffer;
+  }
+
+  fn write_high_byte_buffer_to_register(&mut self) {
+    self.registers[self.context.register.offset()] = self.context.high_byte_buffer;
+  }
+
+  fn write_register_to_low_byte_buffer(&mut self) {
+    self.context.low_byte_buffer = self.registers[self.context.register.offset()];
+  }
+
+  fn write_register_to_high_byte_buffer(&mut self) {
+    self.context.high_byte_buffer = self.registers[self.context.register.offset()];
+  }
+
+  fn write_byte_buffers_to_register_pair(&mut self) {
+    let offset = self.context.register.offset();
+    self.registers[offset] = self.context.high_byte_buffer;
+    self.registers[offset + 1] = self.context.low_byte_buffer;
+  }
+
+  fn write_word_buffer_to_register_pair(&mut self) {
+    (&mut self.registers[register.offset()..]).write_u16::<BigEndian>(self.context.word_buffer).unwrap();
+  }
+
+  fn read_into_low_byte_buffer_from_memory_at_address(&mut self) {
+    self.context.low_byte_buffer = self.memory.borrow().read(self.context.address_buffer);
+  }
+
+  fn read_into_high_byte_buffer_from_memory_at_address(&mut self) {
+    self.context.high_byte_buffer = self.memory.borrow().read(self.context.address_buffer);
+  }
+
+  fn read_into_low_byte_buffer_from_next_memory_byte(&mut self) {
+    self.context.low_byte_buffer = self.read_next_byte();
+  }
+
+  fn read_into_high_byte_buffer_from_next_memory_byte(&mut self) {
+    self.context.high_byte_buffer = self.read_next_byte();
+  }
+
+
+  fn write_low_byte_buffer_to_memory_at_address(&mut self) {
+    self.memory.borrow_mut().write(self.context.address_buffer, self.context.low_byte_buffer);
+  }
+
+  fn write_high_byte_buffer_to_memory_at_address(&mut self) {
+    self.memory.borrow_mut().write(self.context.address_buffer, self.context.high_byte_buffer);
+  }
+
+  fn write_low_byte_buffer_to_next_memory_byte(&mut self) {
+    self.memory.borrow_mut().write(self.read_and_increment_register_pair(Register::PC), self.context.low_byte_buffer);
+  }
+
+  fn write_high_byte_buffer_to_next_memory_byte(&mut self) {
+    self.memory.borrow_mut().write(self.read_and_increment_register_pair(Register::PC), self.context.high_byte_buffer);
+  }
+
   fn read_and_increment_register_pair(&mut self, register: Register) -> u16 {
     let value = self.read_register_pair(register);
     self.write_register_pair(register, value + 1);
@@ -355,7 +707,23 @@ impl CPU {
   }
 
   fn read_next_instruction(&mut self) -> u8 {
-    self.memory.borrow().read(self.read_and_increment_register_pair(Register::PC) as usize)
+    self.memory.borrow().read(self.read_and_increment_register_pair(Register::PC))
+  }
+
+  fn read_next_byte(&mut self) -> u8 {
+    self.memory.borrow().read(self.read_and_increment_register_pair(Register::PC))
+  }
+
+  fn read_low_from_memory(&mut self) {
+    self.context.low = self.read_next_byte();
+  }
+
+  fn read_high_from_memory(&mut self) {
+    self.context.low = self.read_next_byte();
+  }
+
+  fn write_memory(&mut self, address: u16, value: u8) {
+    self.memory.borrow_mut().write(address, value);
   }
 
   fn read_register(&self, register: Register) -> u8 {
@@ -465,154 +833,250 @@ impl CPU {
     self.cycles_to_wait = cycles;
   }
 
-  fn noop(&mut self, _opcode: Opcode) {
-    self.wait_cycles(4);
-  }
+  fn noop(&mut self, _opcode: Opcode) {}
 
   fn reg_to_reg_ld(&mut self, opcode: Opcode) {
     let src = Register::from_r_bits(opcode.z_bits());
     let dest = Register::from_r_bits(opcode.y_bits());
     self.write_register(dest, self.read_register(src));
-    self.wait_cycles(4);
   }
 
-  fn immediate_to_reg_ld(&mut self, opcode: Opcode) {
-    let dest = Register::from_r_bits(opcode.y_bits());
-    let value = self.read_next_instruction();
-    self.write_register(dest, value);
-    self.wait_cycles(8);
+  fn immediate_to_reg_ld(&mut self) {
+    let register = Register::from_r_bits(self.context.opcode.y_bits());
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::NextMemoryByte,
+      dest: ByteLocation::Register(register),
+    });
   }
 
   fn immediate_to_indirect_ld(&mut self, _opcode: Opcode) {
     let value = self.read_next_instruction();
-    self.memory.borrow_mut().write(self.read_register_pair(Register::HL) as usize, value);
-    self.wait_cycles(12);
+    self.memory.borrow_mut().write(self.read_register_pair(Register::HL), value);
   }
 
   fn indirect_to_reg_ld(&mut self, opcode: Opcode) {
     let dest = Register::from_r_bits(opcode.y_bits());
-    let value = self.memory.borrow().read(self.read_register_pair(Register::HL) as usize);
+    let value = self.memory.borrow().read(self.read_register_pair(Register::HL));
     self.write_register(dest, value);
-    self.wait_cycles(8);
   }
 
   fn reg_to_indirect_ld(&mut self, opcode: Opcode) {
     let src = Register::from_r_bits(opcode.z_bits());
-    self.memory.borrow_mut().write(self.read_register_pair(Register::HL) as usize, self.read_register(src));
-    self.wait_cycles(8);
+    self.memory.borrow_mut().write(self.read_register_pair(Register::HL), self.read_register(src));
   }
 
   fn indirect_bc_to_reg_a_ld(&mut self, _opcode: Opcode) {
-    self.write_register(Register::A, self.memory.borrow().read(self.read_register_pair(Register::BC) as usize));
-    self.wait_cycles(8);
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::MemoryAtRegisterAddress(Register::BC),
+      dest: ByteLocation::Register(Register::A)
+    });
   }
 
   fn indirect_de_to_reg_a_ld(&mut self, _opcode: Opcode) {
-    self.write_register(Register::A, self.memory.borrow().read(self.read_register_pair(Register::DE) as usize));
-    self.wait_cycles(8);
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::MemoryAtRegisterAddress(Register::DE),
+      dest: ByteLocation::Register(Register::A)
+    });
   }
 
   fn indirect_c_with_offset_to_reg_a_ld(&mut self, _opcode: Opcode) {
-    self.write_register(Register::A, self.memory.borrow().read(0xFF00 + self.read_register(Register::C) as usize));
-    self.wait_cycles(8);
+    self.write_register(Register::A, self.memory.borrow().read(0xFF00 + self.read_register(Register::C) as u16));
   }
 
   fn reg_a_to_indirect_c_ld(&mut self, _opcode: Opcode) {
-    self.memory.borrow_mut().write(0xFF00 + self.read_register(Register::C) as usize, self.read_register(Register::A));
-    self.wait_cycles(8);
+    self.memory.borrow_mut().write(0xFF00 + self.read_register(Register::C) as u16, self.read_register(Register::A));
   }
 
   fn immediate_indirect_with_offset_to_reg_a_ld(&mut self, _opcode: Opcode) {
-    let offset = self.read_next_instruction() as usize;
+    let offset = self.read_next_instruction() as u16;
     self.write_register(Register::A, self.memory.borrow().read(0xFF00 + offset));
-    self.wait_cycles(12);
   }
 
   fn reg_a_to_immediate_indirect_with_offset_ld(&mut self, _opcode: Opcode) {
-    let offset = self.read_next_instruction() as usize;
+    let offset = self.read_next_instruction() as u16;
     self.memory.borrow_mut().write(0xFF00 + offset, self.read_register(Register::A));
-    self.wait_cycles(12);
   }
 
   fn immediate_indirect_to_reg_a_ld(&mut self, _opcode: Opcode) {
     let lower_address = self.read_next_instruction();
     let upper_address = self.read_next_instruction();
-    self.write_register(Register::A, self.memory.borrow().read((&[upper_address, lower_address][..]).read_u16::<BigEndian>().unwrap() as usize));
-    self.wait_cycles(16);
+    self.write_register(Register::A, self.memory.borrow().read((&[upper_address, lower_address][..]).read_u16::<BigEndian>().unwrap()));
   }
 
   fn reg_a_to_immediate_indirect_ld(&mut self, _opcode: Opcode) {
     let lower_address = self.read_next_instruction();
     let upper_address = self.read_next_instruction();
-    self.memory.borrow_mut().write((&[upper_address, lower_address][..]).read_u16::<BigEndian>().unwrap() as usize, self.read_register(Register::A));
-    self.wait_cycles(16);
+    self.memory.borrow_mut().write((&[upper_address, lower_address][..]).read_u16::<BigEndian>().unwrap(), self.read_register(Register::A));
   }
 
   fn indirect_hl_to_reg_a_ld_and_increment(&mut self, _opcode: Opcode) {
-    let value = {
-      self.memory.borrow().read(self.read_and_increment_register_pair(Register::HL) as usize)
-    };
-    self.write_register(Register::A, value);
-    self.wait_cycles(8);
+    self.operations.push_back(Operation::Composite(
+      Operation::MoveByte {
+      src: ByteLocation::MemoryAtRegisterAddress(Register::BC),
+      dest: ByteLocation::Register(Register::A)
+      },
+      Operation::IncrementWord(WordLocation::Register(Register::HL))
+    ));
   }
 
   fn indirect_hl_to_reg_a_ld_and_decrement(&mut self, _opcode: Opcode) {
-    let value = {
-      self.memory.borrow().read(self.read_and_decrement_register_pair(Register::HL) as usize)
-    };
-    self.write_register(Register::A, value);
-    self.wait_cycles(8);
+    self.operations.push_back(Operation::Composite(
+      Operation::MoveByte {
+        src: ByteLocation::MemoryAtRegisterAddress(Register::BC),
+        dest: ByteLocation::Register(Register::A)
+      },
+      Operation::DecrementWord(WordLocation::Register(Register::HL))
+    ));
   }
 
-  fn reg_a_to_indirect_bc_ld(&mut self, _opcode: Opcode) {
-    self.memory.borrow_mut().write(self.read_register_pair(Register::BC) as usize, self.read_register(Register::A));
-    self.wait_cycles(8);
+  fn reg_a_to_indirect_bc_ld(&mut self) {
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::Register(Register::A),
+      dest: ByteLocation::MemoryAtRegisterAddress(Register::BC),
+    });
   }
 
   fn reg_a_to_indirect_de_ld(&mut self, _opcode: Opcode) {
-    self.memory.borrow_mut().write(self.read_register_pair(Register::DE) as usize, self.read_register(Register::A));
-    self.wait_cycles(8);
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::Register(Register::A),
+      dest: ByteLocation::MemoryAtRegisterAddress(Register::DE),
+    });
   }
 
   fn reg_a_to_indirect_hl_ld_and_increment(&mut self, _opcode: Opcode) {
-    self.memory.borrow_mut().write(self.read_and_increment_register_pair(Register::HL) as usize, self.read_register(Register::A));
-    self.wait_cycles(8);
+    self.operations.push_back(Operation::Composite(
+      Operation::MoveByte {
+        src: ByteLocation::Register(Register::A),
+        dest: ByteLocation::MemoryAtRegisterAddress(Register::HL),
+      },
+      Operation::IncrementWord(WordLocation::Register(Register::HL)),
+    ));
   }
 
   fn reg_a_to_indirect_hl_ld_and_decrement(&mut self, _opcode: Opcode) {
-    self.memory.borrow_mut().write(self.read_and_decrement_register_pair(Register::HL) as usize, self.read_register(Register::A));
-    self.wait_cycles(8);
+    self.operations.push_back(Operation::Composite(
+      Operation::MoveByte {
+        src: ByteLocation::Register(Register::A),
+        dest: ByteLocation::MemoryAtRegisterAddress(Register::HL),
+      },
+      Operation::DecrementWord(WordLocation::Register(Register::HL)),
+    ));
   }
 
-  fn immediate_to_reg_pair_ld(&mut self, opcode: Opcode) {
-    let lower_bits = self.read_next_instruction();
-    let upper_bits = self.read_next_instruction();
-    let value = (&[upper_bits, lower_bits][..]).read_u16::<BigEndian>().unwrap();
-    self.write_register_pair(Register::from_dd_bits(opcode.dd_bits()), value);
-    self.wait_cycles(12);
+  fn read_from_byte_location(&mut self, location: ByteLocation) -> u8 {
+    match location {
+      ByteLocation::LowByteBuffer => self.context.low_byte_buffer,
+      ByteLocation::HighByteBuffer => self.context.high_byte_buffer,
+      ByteLocation::LowByteFromWordBuffer => self.context.word_buffer as u8,
+      ByteLocation::HighByteFromWordBuffer => (self.context.word_buffer >> 8) as u8,
+      ByteLocation::Register(register) => self.read_register(register),
+      ByteLocation::MemoryAtRegisterAddress(register) => self.memory.borrow().read(self.read_register_pair(register)),
+      ByteLocation::NextMemoryByte => self.read_next_byte(),
+      ByteLocation::LowByteFromAddressBuffer => self.context.address_buffer as u8,
+      ByteLocation::HighByteFromAddressBuffer => (self.context.address_buffer >> 8) as u8,
+      ByteLocation::MemoryAtAddressBuffer => self.memory.borrow().read(self.context.address_buffer)
+    }
+  }
+
+  fn write_to_byte_location(&mut self, location: ByteLocation, value: u8) {
+    match location {
+      ByteLocation::LowByteBuffer => self.context.low_byte_buffer = value,
+      ByteLocation::HighByteBuffer => self.context.high_byte_buffer = value,
+      ByteLocation::LowByteFromWordBuffer => self.context.word_buffer = (self.context.word_buffer & 0xFF00) + (value as u16),
+      ByteLocation::HighByteFromWordBuffer => self.context.word_buffer = (self.context.word_buffer & 0x00FF) + (value << 8) as u16,
+      ByteLocation::Register(register) => self.registers[register.offset()] = value,
+      ByteLocation::MemoryAtRegisterAddress(register) => self.memory.borrow_mut().write(self.read_register_pair(register), value),
+      ByteLocation::NextMemoryByte => panic!("Can't write to next memory byte"),
+      ByteLocation::LowByteFromAddressBuffer => self.context.address_buffer = (self.context.address_buffer & 0xFF00) + (value as u16),
+      ByteLocation::HighByteFromAddressBuffer => self.context.address_buffer = (self.context.address_buffer & 0x00FF) + (value << 8) as u16,
+      ByteLocation::MemoryAtAddressBuffer => {}
+    }
+  }
+
+  fn read_from_word_location(&mut self, location: WordLocation) -> u16 {
+    match location {
+      WordLocation::Register(register) => self.read_register_pair(register),
+      WordLocation::WordBuffer => self.context.word_buffer,
+      WordLocation::NextMemoryWord => {
+        let lower_address = self.read_next_byte();
+        let upper_address = self.read_next_byte();
+        (&[upper_address, lower_address][..]).read_u16::<BigEndian>().unwrap()
+      }
+      WordLocation::AddressBuffer => self.context.address_buffer
+    }
+  }
+
+  fn write_to_word_location(&mut self, location: WordLocation, value: u16) {
+    match location {
+      WordLocation::Register(register) => self.write_register_pair(register, value),
+      WordLocation::WordBuffer => self.context.word_buffer = value,
+      WordLocation::NextMemoryWord => panic!("Can't write to next memory word"),
+      WordLocation::AddressBuffer => self.context.address_buffer = value
+    }
+  }
+
+  fn execute_operation(&mut self, operation: Operation) {
+    match operation {
+      Operation::MoveByte { src, dest } => {
+        let value = self.read_from_byte_location(src);
+        self.write_to_byte_location(dest, value);
+      }
+      Operation::MoveWord { src, dest } => {
+        let value = self.read_from_word_location(src);
+        self.write_to_word_location(dest, value);
+      }
+      Operation::IncrementByte(location) => {
+        let value = self.read_from_byte_location(location).wrapping_add(1);
+        self.write_to_byte_location(location, value);
+      }
+      Operation::DecrementByte(location) => {
+        let value = self.read_from_byte_location(location).wrapping_sub(1);
+        self.write_to_byte_location(location, value);
+      }
+      Operation::IncrementWord(location) => {
+        let value = self.read_from_word_location(location).wrapping_add(1);
+        self.write_to_word_location(location, value);
+      }
+      Operation::DecrementWord(location) => {
+        let value = self.read_from_word_location(location).wrapping_sub(1);
+        self.write_to_word_location(location, value);
+      }
+      Operation::Composite(operation1, operation2) => {
+        self.execute_operation(operation1);
+        self.execute_operation(operation2);
+      }
+      Operation::AddSignedByteToWord(byte_location, word_location) => {
+        let byte = self.read_from_byte_location(byte_location) as i8;
+        let result = self.read_from_word_location(word_location) + (byte as u16);
+        self.write_to_word_location(word_location, result);
+      }
+    }
+  }
+
+  fn immediate_to_reg_pair_ld(&mut self) {
+    let register = Register::from_dd_bits(self.context.opcode.dd_bits());
+    self.operations.push_back(Operation::MoveByte { src: ByteLocation::NextMemoryByte, dest: ByteLocation::Register(register.get_lower_register()) });
+    self.operations.push_back(Operation::MoveByte { src: ByteLocation::NextMemoryByte, dest: ByteLocation::Register(register.get_upper_register()) });
   }
 
   fn reg_hl_to_reg_sp_ld(&mut self, _opcode: Opcode) {
     let value = self.read_register_pair(Register::HL);
     self.write_register_pair(Register::SP, value);
-    self.wait_cycles(8);
   }
 
   fn push_reg_pair_to_stack(&mut self, opcode: Opcode) {
     let mut memory = self.memory.borrow_mut();
     let value = self.read_register_pair(Register::from_qq_bits(opcode.qq_bits())).to_be_bytes();
-    memory.write(self.read_and_decrement_register_pair(Register::SP) as usize, value[0]);
-    memory.write(self.read_and_decrement_register_pair(Register::SP) as usize, value[1]);
-    self.wait_cycles(16);
+    memory.write(self.read_and_decrement_register_pair(Register::SP), value[0]);
+    memory.write(self.read_and_decrement_register_pair(Register::SP), value[1]);
   }
 
   fn pop_stack_to_reg_pair(&mut self, opcode: Opcode) {
     let memory = self.memory.borrow();
-    let lower_bits = memory.read(self.read_and_increment_register_pair(Register::SP) as usize);
-    let upper_bits = memory.read(self.read_and_increment_register_pair(Register::SP) as usize);
+    let lower_bits = memory.read(self.read_and_increment_register_pair(Register::SP));
+    let upper_bits = memory.read(self.read_and_increment_register_pair(Register::SP));
     let value = (&[upper_bits, lower_bits][..]).read_u16::<BigEndian>().unwrap();
     self.write_register_pair(Register::from_qq_bits(opcode.qq_bits()), value);
-    self.wait_cycles(12);
   }
 
   // TODO: Do a more thorough check to see if this is correct. There seems to be a lot of confusion surrounding the (half) carry bits
@@ -623,18 +1087,28 @@ impl CPU {
     let temp = ((!result & (reg_sp | signed_value)) | (reg_sp & signed_value)).to_be_bytes()[0];
     self.write_register(Register::F, (temp & 0x80).wrapping_shr(3) | ((temp & 0x08).wrapping_shl(2)));
     self.write_register_pair(Register::HL, result);
-    self.wait_cycles(12);
   }
 
-  fn reg_sp_to_immediate_indirect_ld(&mut self, _opcode: Opcode) {
-    let mut memory = self.memory.borrow_mut();
-    let lower_address = self.read_next_instruction();
-    let upper_address = self.read_next_instruction();
-    let address = (&[upper_address, lower_address][..]).read_u16::<BigEndian>().unwrap() as usize;
-    let sp = self.read_register_pair(Register::SP).to_be_bytes();
-    memory.write(address, sp[1]);
-    memory.write(address + 1, sp[0]);
-    self.wait_cycles(20);
+  fn reg_sp_to_immediate_indirect_ld(&mut self) {
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::NextMemoryByte,
+      dest: ByteLocation::LowByteFromAddressBuffer,
+    });
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::NextMemoryByte,
+      dest: ByteLocation::HighByteFromAddressBuffer,
+    });
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::Register(Register::SP.get_lower_register()),
+      dest: ByteLocation::MemoryAtAddressBuffer,
+    });
+    self.operations.push_back(Operation::Composite(
+      Operation::IncrementWord(WordLocation::AddressBuffer),
+      Operation::MoveByte {
+        src: ByteLocation::Register(Register::SP.get_upper_register()),
+        dest: ByteLocation::MemoryAtAddressBuffer,
+      },
+    ));
   }
 
   fn add_value_to_reg_a_and_write_to_reg_a(&mut self, value: u8) {
@@ -642,25 +1116,21 @@ impl CPU {
     let result = ALU::add(reg_a, value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.half_carry, 5), (result.carry, 4)]));
     self.write_register(Register::A, result.value);
-    self.wait_cycles(8);
   }
 
   fn add_reg_to_reg_a_and_write_to_reg_a(&mut self, opcode: Opcode) {
     let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
     self.add_value_to_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(4);
   }
 
   fn add_immediate_to_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
     let value = self.read_next_instruction();
     self.add_value_to_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(8);
   }
 
   fn add_indirect_hl_to_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     self.add_value_to_reg_a_and_write_to_reg_a(self.memory.borrow().read(address));
-    self.wait_cycles(8);
   }
 
   fn subtract_value_from_reg_a_and_write_to_reg_a(&mut self, value: u8) {
@@ -673,19 +1143,16 @@ impl CPU {
   fn subtract_reg_from_reg_a_and_write_to_reg_a(&mut self, opcode: Opcode) {
     let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
     self.subtract_value_from_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(4);
   }
 
   fn subtract_immediate_from_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
     let value = self.read_next_instruction();
     self.subtract_value_from_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(8);
   }
 
   fn subtract_indirect_hl_from_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     self.subtract_value_from_reg_a_and_write_to_reg_a(self.memory.borrow().read(address));
-    self.wait_cycles(8);
   }
 
   fn subtract_value_with_carry_from_reg_a_and_write_to_reg_a(&mut self, value: u8) {
@@ -698,19 +1165,16 @@ impl CPU {
   fn subtract_reg_with_carry_from_reg_a_and_write_to_reg_a(&mut self, opcode: Opcode) {
     let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
     self.subtract_value_with_carry_from_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(4);
   }
 
   fn subtract_immediate_with_carry_from_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
     let value = self.read_next_instruction();
     self.subtract_value_with_carry_from_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(8);
   }
 
   fn subtract_indirect_hl_with_carry_from_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     self.subtract_value_with_carry_from_reg_a_and_write_to_reg_a(self.memory.borrow().read(address));
-    self.wait_cycles(8);
   }
 
   fn add_value_with_carry_to_reg_a_and_write_to_reg_a(&mut self, value: u8) {
@@ -724,19 +1188,16 @@ impl CPU {
   fn add_reg_with_carry_to_reg_a_and_write_to_reg_a(&mut self, opcode: Opcode) {
     let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
     self.add_value_with_carry_to_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(4);
   }
 
   fn add_immediate_with_carry_to_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
     let value = self.read_next_instruction();
     self.add_value_with_carry_to_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(8);
   }
 
   fn add_indirect_hl_with_carry_to_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     self.add_value_with_carry_to_reg_a_and_write_to_reg_a(self.memory.borrow().read(address));
-    self.wait_cycles(8);
   }
 
   fn and_value_with_reg_a_and_write_to_reg_a(&mut self, value: u8) {
@@ -749,19 +1210,16 @@ impl CPU {
   fn and_reg_with_reg_a_and_write_to_reg_a(&mut self, opcode: Opcode) {
     let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
     self.and_value_with_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(4);
   }
 
   fn and_immediate_with_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
     let value = self.read_next_instruction();
     self.and_value_with_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(8);
   }
 
   fn and_indirect_hl_with_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     self.and_value_with_reg_a_and_write_to_reg_a(self.memory.borrow().read(address));
-    self.wait_cycles(8);
   }
 
   fn or_value_with_reg_a_and_write_to_reg_a(&mut self, value: u8) {
@@ -774,19 +1232,16 @@ impl CPU {
   fn or_reg_with_reg_a_and_write_to_reg_a(&mut self, opcode: Opcode) {
     let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
     self.or_value_with_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(4);
   }
 
   fn or_immediate_with_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
     let value = self.read_next_instruction();
     self.or_value_with_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(8);
   }
 
   fn or_indirect_hl_with_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     self.or_value_with_reg_a_and_write_to_reg_a(self.memory.borrow().read(address));
-    self.wait_cycles(8);
   }
 
   fn xor_value_with_reg_a_and_write_to_reg_a(&mut self, value: u8) {
@@ -799,19 +1254,16 @@ impl CPU {
   fn xor_reg_with_reg_a_and_write_to_reg_a(&mut self, opcode: Opcode) {
     let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
     self.xor_value_with_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(4);
   }
 
   fn xor_immediate_with_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
     let value = self.read_next_instruction();
     self.xor_value_with_reg_a_and_write_to_reg_a(value);
-    self.wait_cycles(8);
   }
 
   fn xor_indirect_hl_with_reg_a_and_write_to_reg_a(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     self.xor_value_with_reg_a_and_write_to_reg_a(self.memory.borrow().read(address));
-    self.wait_cycles(8);
   }
 
   fn compare_value_with_reg_a(&mut self, value: u8) {
@@ -823,65 +1275,65 @@ impl CPU {
   fn compare_reg_with_reg_a(&mut self, opcode: Opcode) {
     let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
     self.compare_value_with_reg_a(value);
-    self.wait_cycles(4);
   }
 
   fn compare_immediate_with_reg_a(&mut self, _opcode: Opcode) {
     let value = self.read_next_instruction();
     self.compare_value_with_reg_a(value);
-    self.wait_cycles(8);
   }
 
   fn compare_indirect_hl_with_reg_a(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     self.compare_value_with_reg_a(self.memory.borrow().read(address));
-    self.wait_cycles(8);
   }
 
-  fn increment_reg(&mut self, opcode: Opcode) {
-    let register = Register::from_r_bits(opcode.y_bits());
+  fn increment_reg(&mut self) {
+    let register = Register::from_r_bits(self.context.opcode.y_bits());
     let value = self.read_register(register);
     let result = ALU::add(value, 1);
-    self.write_register_masked(Register::F, u8::compose(&[(result.zero, 7), (result.half_carry, 5)]), 0xE0);
     self.write_register(register, result.value);
-    self.wait_cycles(4);
+    self.write_register_masked(Register::F, u8::compose(&[(result.zero, 7), (result.half_carry, 5)]), 0xE0);
   }
 
   fn increment_indirect_hl(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let result = ALU::add(value, 1);
     self.write_register_masked(Register::F, u8::compose(&[(result.zero, 7), (result.half_carry, 5)]), 0xE0);
     self.memory.borrow_mut().write(address, result.value);
-    self.wait_cycles(12);
   }
 
-  fn decrement_reg(&mut self, opcode: Opcode) {
-    let register = Register::from_r_bits(opcode.y_bits());
+  fn decrement_reg(&mut self) {
+    let register = Register::from_r_bits(self.context.opcode.y_bits());
     let value = self.read_register(register);
     let result = ALU::subtract(value, 1);
     self.write_register_masked(Register::F, u8::compose(&[(result.zero, 7), (true, 6), (result.half_carry, 5)]), 0xE0);
     self.write_register(register, result.value);
-    self.wait_cycles(4);
   }
 
   fn decrement_indirect_hl(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let result = ALU::subtract(value, 1);
     self.write_register_masked(Register::F, u8::compose(&[(result.zero, 7), (true, 6), (result.half_carry, 5)]), 0xE0);
     self.memory.borrow_mut().write(address, result.value);
-    self.wait_cycles(12);
   }
 
-  fn add_reg_pair_to_reg_hl(&mut self, opcode: Opcode) {
-    let register = Register::from_dd_bits(opcode.dd_bits());
+  fn add_reg_pair_to_reg_hl(&mut self) {
+    let register = Register::from_dd_bits(self.context.opcode.dd_bits());
     let register_value = self.read_register_pair(register);
     let hl_value = self.read_register_pair(Register::HL);
     let result = ALU::add_pair(register_value, hl_value);
     self.write_register_masked(Register::F, u8::compose(&[(result.half_carry, 5), (result.carry, 4)]), 0x70);
-    self.write_register_pair(Register::HL, result.value);
-    self.wait_cycles(8);
+    self.context.word_buffer = result.value;
+    self.execute_operation(Operation::MoveByte {
+      src: ByteLocation::LowByteFromWordBuffer,
+      dest: ByteLocation::Register(Register::HL.get_lower_register())
+    });
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::HighByteFromWordBuffer,
+      dest: ByteLocation::Register(Register::HL.get_upper_register())
+    })
   }
   //TODO: Check whether the flags are set correctly
   fn add_immediate_to_reg_sp(&mut self, _opcode: Opcode) {
@@ -890,30 +1342,42 @@ impl CPU {
     let result = ALU::add_pair(sp_value, value as u16);
     self.write_register(Register::F, u8::compose(&[(result.half_carry, 5), (result.carry, 4)]));
     self.write_register_pair(Register::SP, result.value);
-    self.wait_cycles(16);
   }
 
-  fn increment_reg_pair(&mut self, opcode: Opcode) {
-    let register = Register::from_dd_bits(opcode.dd_bits());
-    let value = self.read_register_pair(register);
+  fn increment_reg_pair(&mut self) {
+    let register = Register::from_dd_bits(self.context.opcode.dd_bits());
+    let value = self.read_register_pair(register) + 1;
     let result = ALU::add_pair(value, 1);
-    self.write_register_pair(register, result.value);
-    self.wait_cycles(8);
+    self.context.word_buffer = result.value;
+    self.execute_operation(Operation::MoveByte {
+      src: ByteLocation::LowByteFromWordBuffer,
+      dest: ByteLocation::Register(register.get_lower_register()),
+    });
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::HighByteFromWordBuffer,
+      dest: ByteLocation::Register(register.get_upper_register()),
+    });
   }
 
-  fn decrement_reg_pair(&mut self, opcode: Opcode) {
-    let register = Register::from_dd_bits(opcode.dd_bits());
-    let value = self.read_register_pair(register);
+  fn decrement_reg_pair(&mut self) {
+    let register = Register::from_dd_bits(self.context.opcode.dd_bits());
+    let value = self.read_register_pair(register) + 1;
     let result = ALU::subtract_pair(value, 1);
-    self.write_register_pair(register, result.value);
-    self.wait_cycles(8);
+    self.context.word_buffer = result.value;
+    self.execute_operation(Operation::MoveByte {
+      src: ByteLocation::LowByteFromWordBuffer,
+      dest: ByteLocation::Register(register.get_lower_register()),
+    });
+    self.operations.push_back(Operation::MoveByte {
+      src: ByteLocation::HighByteFromWordBuffer,
+      dest: ByteLocation::Register(register.get_upper_register()),
+    });
   }
 
-  fn rotate_reg_a_left(&mut self, _opcode: Opcode) {
+  fn rotate_reg_a_left(&mut self) {
     let result = ALU::rotate_left(self.read_register(Register::A));
     self.write_register(Register::F, u8::compose(&[(result.carry, 4)]));
     self.write_register(Register::A, result.value);
-    self.wait_cycles(4);
   }
 
   fn rotate_reg_left(&mut self, opcode: Opcode) {
@@ -922,16 +1386,14 @@ impl CPU {
     let result = ALU::rotate_left(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.write_register(register, result.value);
-    self.wait_cycles(8);
   }
 
   fn rotate_indirect_hl_left(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let result = ALU::rotate_left(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.memory.borrow_mut().write(address, result.value);
-    self.wait_cycles(16);
   }
 
   fn rotate_reg_a_left_through_carry(&mut self, _opcode: Opcode) {
@@ -939,7 +1401,6 @@ impl CPU {
     let result = ALU::rotate_left_through_carry(self.read_register(Register::A), carry);
     self.write_register(Register::F, u8::compose(&[(result.carry, 4)]));
     self.write_register(Register::A, result.value);
-    self.wait_cycles(4);
   }
 
   fn rotate_reg_left_through_carry(&mut self, opcode: Opcode) {
@@ -948,23 +1409,20 @@ impl CPU {
     let result = ALU::rotate_left_through_carry(value, self.read_register(Register::F).get_bit(4));
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.write_register(register, result.value);
-    self.wait_cycles(8);
   }
 
   fn rotate_indirect_hl_left_through_carry(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let result = ALU::rotate_left_through_carry(value, self.read_register(Register::F).get_bit(4));
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.memory.borrow_mut().write(address, result.value);
-    self.wait_cycles(16);
   }
 
   fn rotate_reg_a_right(&mut self, _opcode: Opcode) {
     let result = ALU::rotate_right(self.read_register(Register::A));
     self.write_register(Register::F, u8::compose(&[(result.carry, 4)]));
     self.write_register(Register::A, result.value);
-    self.wait_cycles(4);
   }
 
   fn rotate_reg_right(&mut self, opcode: Opcode) {
@@ -973,16 +1431,14 @@ impl CPU {
     let result = ALU::rotate_right(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.write_register(register, result.value);
-    self.wait_cycles(8);
   }
 
   fn rotate_indirect_hl_right(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let result = ALU::rotate_right(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.memory.borrow_mut().write(address, result.value);
-    self.wait_cycles(16);
   }
 
   fn rotate_reg_a_right_through_carry(&mut self, _opcode: Opcode) {
@@ -990,7 +1446,6 @@ impl CPU {
     let result = ALU::rotate_right_through_carry(self.read_register(Register::A), carry);
     self.write_register(Register::F, u8::compose(&[(result.carry, 4)]));
     self.write_register(Register::A, result.value);
-    self.wait_cycles(4);
   }
 
   fn rotate_reg_right_through_carry(&mut self, opcode: Opcode) {
@@ -999,16 +1454,14 @@ impl CPU {
     let result = ALU::rotate_right_through_carry(value, self.read_register(Register::F).get_bit(4));
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.write_register(register, result.value);
-    self.wait_cycles(8);
   }
 
   fn rotate_indirect_hl_right_through_carry(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let result = ALU::rotate_right_through_carry(value, self.read_register(Register::F).get_bit(4));
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.memory.borrow_mut().write(address, result.value);
-    self.wait_cycles(16);
   }
 
   fn shift_reg_left(&mut self, opcode: Opcode) {
@@ -1017,7 +1470,6 @@ impl CPU {
     let result = ALU::shift_left(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.write_register(register, result.value);
-    self.wait_cycles(8);
   }
 
   fn shift_reg_right(&mut self, opcode: Opcode) {
@@ -1026,7 +1478,6 @@ impl CPU {
     let result = ALU::shift_right(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.write_register(register, result.value);
-    self.wait_cycles(8);
   }
 
   fn shift_reg_right_arithmetic(&mut self, opcode: Opcode) {
@@ -1035,34 +1486,30 @@ impl CPU {
     let result = ALU::shift_right_arithmetic(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.write_register(register, result.value);
-    self.wait_cycles(8);
   }
 
   fn shift_indirect_hl_left(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let result = ALU::shift_left(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.memory.borrow_mut().write(address, result.value);
-    self.wait_cycles(16);
   }
 
   fn shift_indirect_hl_right(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let result = ALU::shift_right(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.memory.borrow_mut().write(address, result.value);
-    self.wait_cycles(16);
   }
 
   fn shift_indirect_hl_right_arithmetic(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let result = ALU::shift_right_arithmetic(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7), (result.carry, 4)]));
     self.memory.borrow_mut().write(address, result.value);
-    self.wait_cycles(16);
   }
 
   fn swap_reg(&mut self, opcode: Opcode) {
@@ -1071,31 +1518,27 @@ impl CPU {
     let result = ALU::swap(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7)]));
     self.write_register(register, result.value);
-    self.wait_cycles(16);
   }
 
   fn swap_indirect_hl(&mut self, _opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let result = ALU::swap(value);
     self.write_register(Register::F, u8::compose(&[(result.zero, 7)]));
     self.memory.borrow_mut().write(address, result.value);
-    self.wait_cycles(16);
   }
 
   fn get_reg_bit(&mut self, opcode: Opcode) {
     let value = self.read_register(Register::from_r_bits(opcode.z_bits()));
     let bit = opcode.y_bits();
     self.write_register_masked(Register::F, u8::compose(&[(!value.get_bit(bit), 7), (true, 5)]), 0xE0);
-    self.wait_cycles(8);
   }
 
   fn get_indirect_hl_bit(&mut self, opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let bit = opcode.y_bits();
     self.write_register_masked(Register::F, u8::compose(&[(!value.get_bit(bit), 7), (true, 5)]), 0xE0);
-    self.wait_cycles(12);
   }
 
   fn set_reg_bit(&mut self, opcode: Opcode) {
@@ -1103,15 +1546,13 @@ impl CPU {
     let value = self.read_register(register);
     let bit = opcode.y_bits();
     self.write_register(register, value.set_bit(bit));
-    self.wait_cycles(8);
   }
 
   fn set_indirect_hl_bit(&mut self, opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let bit = opcode.y_bits();
     self.memory.borrow_mut().write(address, value.set_bit(bit));
-    self.wait_cycles(16);
   }
 
   fn reset_reg_bit(&mut self, opcode: Opcode) {
@@ -1119,15 +1560,13 @@ impl CPU {
     let value = self.read_register(register);
     let bit = opcode.y_bits();
     self.write_register(register, value.reset_bit(bit));
-    self.wait_cycles(8);
   }
 
   fn reset_indirect_hl_bit(&mut self, opcode: Opcode) {
-    let address = self.read_register_pair(Register::HL) as usize;
+    let address = self.read_register_pair(Register::HL);
     let value = self.memory.borrow().read(address);
     let bit = opcode.y_bits();
     self.memory.borrow_mut().write(address, value.reset_bit(bit));
-    self.wait_cycles(16);
   }
 
   fn jump(&mut self, _opcode: Opcode) {
@@ -1135,7 +1574,6 @@ impl CPU {
     let upper_address = self.read_next_instruction();
     let address = (&[upper_address, lower_address][..]).read_u16::<BigEndian>().unwrap();
     self.write_register_pair(Register::PC, address);
-    self.wait_cycles(16);
   }
 
   fn satisfies_condition(&self, opcode: Opcode) -> bool {
@@ -1155,18 +1593,15 @@ impl CPU {
       let upper_address = self.read_next_instruction();
       let address = (&[upper_address, lower_address][..]).read_u16::<BigEndian>().unwrap();
       self.write_register_pair(Register::PC, address);
-      self.wait_cycles(16);
     } else {
       self.write_register_pair(Register::PC, self.read_register_pair(Register::PC) + 2);
-      self.wait_cycles(12);
     }
   }
 
-  fn jump_relative(&mut self, _opcode: Opcode) {
+  fn jump_relative(&mut self) {
     let offset = self.read_next_instruction() as i8;
     let address = self.read_register_pair(Register::PC);
     self.write_register_pair(Register::PC, address.wrapping_add(offset as u16));
-    self.wait_cycles(12);
   }
 
   fn jump_conditional_relative(&mut self, opcode: Opcode) {
@@ -1174,23 +1609,20 @@ impl CPU {
       let offset = self.read_next_instruction() as i8;
       let address = self.read_register_pair(Register::PC);
       self.write_register_pair(Register::PC, address.wrapping_add(offset as u16));
-      self.wait_cycles(12);
     } else {
       self.write_register_pair(Register::PC, self.read_register_pair(Register::PC) + 1);
-      self.wait_cycles(8);
     }
   }
 
   fn jump_to_indirect_hl(&mut self, _opcode: Opcode) {
     self.write_register_pair(Register::PC, self.read_register_pair(Register::HL));
-    self.wait_cycles(4);
   }
 
   fn call_address(&mut self, address: u16) {
     let mut memory = self.memory.borrow_mut();
     let pc_bytes = (self.read_register_pair(Register::PC)).to_be_bytes();
-    memory.write(self.decrement_and_read_register_pair(Register::SP) as usize, pc_bytes[0]);
-    memory.write(self.decrement_and_read_register_pair(Register::SP) as usize, pc_bytes[1]);
+    memory.write(self.decrement_and_read_register_pair(Register::SP), pc_bytes[0]);
+    memory.write(self.decrement_and_read_register_pair(Register::SP), pc_bytes[1]);
     self.write_register_pair(Register::PC, address);
   }
 
@@ -1198,7 +1630,6 @@ impl CPU {
     let lower_address = self.read_next_instruction();
     let upper_address = self.read_next_instruction();
     self.call_address((&[upper_address, lower_address][..]).read_u16::<BigEndian>().unwrap());
-    self.wait_cycles(24);
   }
 
   fn call_conditional(&mut self, opcode: Opcode) {
@@ -1206,31 +1637,25 @@ impl CPU {
       self.call(opcode);
     } else {
       self.write_register_pair(Register::PC, self.read_register_pair(Register::PC) + 2);
-      self.wait_cycles(12);
     }
   }
 
   fn return_from_call(&mut self, _opcode: Opcode) {
     let memory = self.memory.borrow();
-    let lower_pc = memory.read(self.read_and_increment_register_pair(Register::SP) as usize);
-    let upper_pc = memory.read(self.read_and_increment_register_pair(Register::SP) as usize);
+    let lower_pc = memory.read(self.read_and_increment_register_pair(Register::SP));
+    let upper_pc = memory.read(self.read_and_increment_register_pair(Register::SP));
     self.write_register_pair(Register::PC, (&[upper_pc, lower_pc][..]).read_u16::<BigEndian>().unwrap());
-    self.wait_cycles(16);
   }
 
   fn return_from_interrupt(&mut self, opcode: Opcode) {
     self.return_from_call(opcode);
     self.ime = true;
-    self.wait_cycles(16);
   }
 
   fn return_conditionally(&mut self, opcode: Opcode) {
     if self.satisfies_condition(opcode) {
       self.return_from_call(opcode);
-      self.wait_cycles(20);
-    } else {
-      self.wait_cycles(8);
-    }
+    } else {}
   }
 
   fn restart(&mut self, opcode: Opcode) {
@@ -1247,7 +1672,6 @@ impl CPU {
       _ => panic!("{} is not a valid restart code", t)
     };
     self.call_address(address);
-    self.wait_cycles(16);
   }
 
   fn decimal_adjust_reg_a(&mut self, _opcode: Opcode) {
@@ -1267,43 +1691,35 @@ impl CPU {
     };
     self.write_register_masked(Register::F, u8::compose(&[(result.zero, 7), (result.carry | carry, 4)]), 0xB0);
     self.write_register(Register::A, result.value);
-    self.wait_cycles(4);
   }
 
   fn ones_complement_reg_a(&mut self, _opcode: Opcode) {
     self.write_register(Register::A, !self.read_register(Register::A));
     self.write_register_masked(Register::F, 0x60, 0x60);
-    self.wait_cycles(4);
   }
 
   fn flip_carry_flag(&mut self, _opcode: Opcode) {
     self.write_register_masked(Register::F, (self.read_register(Register::F) ^ 0x10) & 0x90, 0x70);
-    self.wait_cycles(4);
   }
 
   fn set_carry_flag(&mut self, _opcode: Opcode) {
     self.write_register_masked(Register::F, 0x10, 0x70);
-    self.wait_cycles(4);
   }
 
   fn disable_interrupts(&mut self, _opcode: Opcode) {
     self.ime = false;
-    self.wait_cycles(4);
   }
 
   fn enable_interrupts(&mut self, _opcode: Opcode) {
     self.ime = true;
-    self.wait_cycles(4);
   }
 
   fn halt(&mut self, _opcode: Opcode) {
     //TODO: Implement halt
-    self.wait_cycles(4);
   }
 
   fn stop(&mut self, _opcode: Opcode) {
     // TODO: Implement stop
-    self.wait_cycles(4);
   }
 }
 
@@ -2383,8 +2799,8 @@ mod tests {
     let mut cpu = CPU::new(memory);
     cpu.write_register(Register::D, 0xA5);
     let bits: Vec<(bool, u8)> = (0u8..8u8).map(|bit| {
-      memory.write(2 * (bit as usize), 0xCB);
-      memory.write(2 * (bit as usize) + 1, 0x42 | (bit << 3));
+      memory.write(2 * (bit), 0xCB);
+      memory.write(2 * (bit) + 1, 0x42 | (bit << 3));
       cpu.execute(&mut memory);
       (!cpu.read_register(Register::F).get_bit(7), bit)
     }).collect();
@@ -2400,8 +2816,8 @@ mod tests {
     cpu.write_register_pair(Register::HL, 0xABCD);
     memory.write(0xABCD, 0xA5);
     let bits: Vec<(bool, u8)> = (0u8..8u8).map(|bit| {
-      memory.write(2 * (bit as usize), 0xCB);
-      memory.write(2 * (bit as usize) + 1, 0x46 | (bit << 3));
+      memory.write(2 * (bit), 0xCB);
+      memory.write(2 * (bit) + 1, 0x46 | (bit << 3));
       cpu.execute(&mut memory);
       (!cpu.read_register(Register::F).get_bit(7), bit)
     }).collect();
@@ -2416,8 +2832,8 @@ mod tests {
     let mut cpu = CPU::new(memory);
     cpu.write_register(Register::F, 0xB0);
     [0, 2, 5, 7].iter().enumerate().for_each(|(index, bit)| {
-      memory.write(2 * (index as usize), 0xCB);
-      memory.write(2 * (index as usize) + 1, 0xC2 | (bit << 3));
+      memory.write(2 * (index), 0xCB);
+      memory.write(2 * (index) + 1, 0xC2 | (bit << 3));
       cpu.execute(&mut memory);
     });
     assert_eq!(cpu.read_register(Register::D), 0xA5);
@@ -2431,8 +2847,8 @@ mod tests {
     cpu.write_register_pair(Register::HL, 0xABCD);
     cpu.write_register(Register::F, 0xB0);
     [0, 2, 5, 7].iter().enumerate().for_each(|(index, bit)| {
-      memory.write(2 * (index as usize), 0xCB);
-      memory.write(2 * (index as usize) + 1, 0xC6 | (bit << 3));
+      memory.write(2 * (index), 0xCB);
+      memory.write(2 * (index) + 1, 0xC6 | (bit << 3));
       cpu.execute(&mut memory);
     });
     assert_eq!(memory.read(0xABCD), 0xA5);
@@ -2446,8 +2862,8 @@ mod tests {
     cpu.write_register(Register::D, 0xFF);
     cpu.write_register(Register::F, 0xB0);
     [1, 3, 4, 6].iter().enumerate().for_each(|(index, bit)| {
-      memory.write(2 * (index as usize), 0xCB);
-      memory.write(2 * (index as usize) + 1, 0x82 | (bit << 3));
+      memory.write(2 * (index), 0xCB);
+      memory.write(2 * (index) + 1, 0x82 | (bit << 3));
       cpu.execute(&mut memory);
     });
     assert_eq!(cpu.read_register(Register::D), 0xA5);
@@ -2462,8 +2878,8 @@ mod tests {
     memory.write(0xABCD, 0xFF);
     cpu.write_register(Register::F, 0xB0);
     [1, 3, 4, 6].iter().enumerate().for_each(|(index, bit)| {
-      memory.write(2 * (index as usize), 0xCB);
-      memory.write(2 * (index as usize) + 1, 0x86 | (bit << 3));
+      memory.write(2 * (index), 0xCB);
+      memory.write(2 * (index) + 1, 0x86 | (bit << 3));
       cpu.execute(&mut memory);
     });
     assert_eq!(memory.read(0xABCD), 0xA5);

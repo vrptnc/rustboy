@@ -3,6 +3,8 @@ pub trait BitUtil {
   fn get_bit(&self, bit: u8) -> bool;
   fn set_bit(&self, bit: u8) -> Self;
   fn reset_bit(&self, bit: u8) -> Self;
+  fn get_lower_byte(&self) -> u8;
+  fn get_upper_byte(&self) -> u8;
 }
 
 impl BitUtil for u8 {
@@ -24,6 +26,14 @@ impl BitUtil for u8 {
 
   fn reset_bit(&self, bit: u8) -> Self {
     self & !(1u8 << bit)
+  }
+
+  fn get_lower_byte(&self) -> u8 {
+    *self
+  }
+
+  fn get_upper_byte(&self) -> u8 {
+    0
   }
 }
 
@@ -47,6 +57,14 @@ impl BitUtil for u16 {
   fn reset_bit(&self, bit: u8) -> Self {
     self & !(1u16 << bit)
   }
+
+  fn get_lower_byte(&self) -> u8 {
+    *self as u8
+  }
+
+  fn get_upper_byte(&self) -> u8 {
+    (*self >> 8) as u8
+  }
 }
 
 impl BitUtil for usize {
@@ -60,7 +78,6 @@ impl BitUtil for usize {
 
   fn get_bit(&self, bit: u8) -> bool {
     (self & ((1 as usize) << bit)) != 0
-
   }
 
   fn set_bit(&self, bit: u8) -> Self {
@@ -69,5 +86,13 @@ impl BitUtil for usize {
 
   fn reset_bit(&self, bit: u8) -> Self {
     self & !((1 as usize) << bit)
+  }
+
+  fn get_lower_byte(&self) -> u8 {
+    *self as u8
+  }
+
+  fn get_upper_byte(&self) -> u8 {
+    (*self >> 8) as u8
   }
 }
