@@ -112,13 +112,12 @@ impl ALU {
   }
 
   pub fn rotate_left_through_carry(value: u8, carry: bool) -> Result<u8> {
-    let result = ((value as u16) << 1) | (carry as u16);
-    let truncated_result = result as u8;
+    let result = (value << 1) | (carry as u8);
     Result {
       value: truncated_result,
       half_carry: false,
       zero: truncated_result == 0,
-      carry: result > 0xFF,
+      carry: value.get_bit(7),
     }
   }
 
@@ -128,51 +127,47 @@ impl ALU {
       value: result,
       half_carry: false,
       zero: result == 0,
-      carry: value % 2 == 1,
+      carry: value.get_bit(0),
     }
   }
 
   pub fn rotate_right_through_carry(value: u8, carry: bool) -> Result<u8> {
-    let result = (value as u16).rotate_right(1) | (if carry { 0x80 } else { 0x00 });
-    let truncated_result = result as u8;
+    let result = (value >> 1) | (if carry { 0x80 } else { 0x00 });
     Result {
-      value: truncated_result,
+      value: result,
       half_carry: false,
-      zero: truncated_result == 0,
-      carry: result >= 0x1000,
+      zero: result == 0,
+      carry: value.get_bit(0),
     }
   }
 
   pub fn shift_left(value: u8) -> Result<u8> {
-    let result = (value as u16) << 1;
-    let truncated_result = result as u8;
+    let result = value << 1;
     Result {
-      value: truncated_result,
+      value: result,
       half_carry: false,
-      zero: truncated_result == 0,
-      carry: result > 0xFF
+      zero: result == 0,
+      carry: value.get_bit(7)
     }
   }
 
   pub fn shift_right(value: u8) -> Result<u8> {
-    let result = (value as u16).rotate_right(1);
-    let truncated_result = result as u8;
+    let result = value >> 1;
     Result {
-      value: truncated_result,
+      value: result,
       half_carry: false,
-      zero: truncated_result == 0,
-      carry: result >= 0x8000
+      zero: result == 0,
+      carry: value.get_bit(0)
     }
   }
 
   pub fn shift_right_arithmetic(value: u8) -> Result<u8> {
-    let result = (value as u16).rotate_right(1);
-    let truncated_result = (result as u8) | (value & 0x80);
+    let result = (value >> 1) | (value & 0x80);
     Result {
-      value: truncated_result,
+      value: result,
       half_carry: false,
-      zero: truncated_result == 0,
-      carry: result >= 0x8000
+      zero: result == 0,
+      carry: value.get_bit(0)
     }
   }
 
