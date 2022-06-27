@@ -5,12 +5,12 @@ pub struct LinearMemory<const Size: usize> {
 }
 
 impl<const Size: usize> Memory for LinearMemory<Size> {
-  fn read(&self, address: usize) -> u8 {
-    self.bytes[address]
+  fn read(&self, address: u16) -> u8 {
+    self.bytes[address as usize]
   }
 
-  fn write(&mut self, address: usize, value: u8) {
-    self.bytes[address] = value
+  fn write(&mut self, address: u16, value: u8) {
+    self.bytes[address as usize] = value
   }
 }
 

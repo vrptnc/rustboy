@@ -6,12 +6,12 @@ pub struct BankMemory<const BankSize: usize, const BankCount: usize> {
 }
 
 impl<const BankSize: usize, const BankCount: usize> Memory for BankMemory<BankSize, BankCount> {
-  fn read(&self, address: usize) -> u8 {
-    self.bytes[self.bank_index][address]
+  fn read(&self, address: u16) -> u8 {
+    self.bytes[self.bank_index][address as usize]
   }
 
-  fn write(&mut self, address: usize, value: u8) {
-    self.bytes[self.bank_index][address] = value;
+  fn write(&mut self, address: u16, value: u8) {
+    self.bytes[self.bank_index][address as usize] = value;
   }
 }
 

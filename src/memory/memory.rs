@@ -6,7 +6,7 @@ pub trait Memory {
   fn write(&mut self, address: u16, value: u8);
 }
 
-pub type MemoryRef = Rc<RefCell<dyn Memory>>;
+pub type MemoryRef = Rc<RefCell<Box<dyn Memory>>>;
 
 pub enum ROMSize {
   KB32,
@@ -73,12 +73,12 @@ pub mod test {
   }
 
   impl Memory for MockMemory {
-    fn read(&self, address: usize) -> u8 {
-      self.bytes[address]
+    fn read(&self, address: u16) -> u8 {
+      self.bytes[address as usize]
     }
 
-    fn write(&mut self, address: usize, value: u8) {
-      self.bytes[address] = value
+    fn write(&mut self, address: u16, value: u8) {
+      self.bytes[address as usize] = value
     }
   }
 }

@@ -1,8 +1,7 @@
-use crate::context::context::{Context, Executable};
 use crate::time::duration::Duration;
 use crate::memory::mbc::Loadable;
 use crate::memory::memory::{Memory, RAMSize, ROMSize};
-use crate::time::time::{ClockAware, TimingAware};
+use crate::time::time::ClockAware;
 use crate::util::bit_util::BitUtil;
 
 #[derive(Copy, Clone)]
@@ -48,12 +47,11 @@ impl RTCFields {
 
   pub fn to_duration(&self) -> Duration {
     Duration {
-      nanoseconds: 0,
-      seconds: self.seconds as u64 +
-        60 * self.minutes as u64 +
-        3600 * self.hours as u64 +
-        86400 * self.days_low as u64 +
-        86400 * 256 * (self.days_high & 0x01) as u64,
+      nanoseconds: (self.seconds as u128 +
+        60 * self.minutes as u128 +
+        3600 * self.hours as u128 +
+        86400 * self.days_low as u128 +
+        86400 * 256 * (self.days_high & 0x01) as u128) * 1_000_000_000u128,
     }
   }
 }
@@ -89,25 +87,25 @@ impl MBC3 {
 }
 
 impl ClockAware for MBC3 {
-  fn tick(&mut self) {
+  fn handle_tick(&mut self, double_speed: bool) {
     self.rtc = self.rtc.tick(Duration::from_nanoseconds(1000));
   }
 }
 
 impl Memory for MBC3 {
-  fn read(&self, address: usize) -> u8 {
+  fn read(&self, address: u16) -> u8 {
     match address {
       0x0000..=0x3FFF => {
-        self.rom[address]
+        self.rom[address as usize]
       }
       0x4000..=0x7FFF => {
-        let address_in_rom = (address & 0x3FFF) | (self.rom_bank_address << 14);
+        let address_in_rom = ((address as usize) & 0x3FFF) | (self.rom_bank_address << 14);
         self.rom[address_in_rom]
       }
       0xA000..=0xBFFF => {
         match self.ram_bank_address {
           0x0..=0x7 => {
-            let address_in_ram = (self.ram_bank_address << 13) | (address & 0x1FFF);
+            let address_in_ram = ((address as usize) & 0x1FFF) | (self.ram_bank_address << 13);
             self.ram[address_in_ram]
           }
           0x8 => self.rtc_registers.seconds,
@@ -122,7 +120,7 @@ impl Memory for MBC3 {
     }
   }
 
-  fn write(&mut self, address: usize, value: u8) {
+  fn write(&mut self, address: u16, value: u8) {
     match address {
       0x0000..=0x1FFF => {
         self.ram_enabled = (value & 0x0F) == 0x0A;
@@ -147,7 +145,7 @@ impl Memory for MBC3 {
         if self.ram_enabled {
           match self.ram_bank_address {
             0x0..=0x7 => {
-              let address_in_ram = (self.ram_bank_address << 13) | (address & 0x1FFF);
+              let address_in_ram = ((address as usize) & 0x1FFF) | (self.ram_bank_address << 13);
               self.ram[address_in_ram] = value;
             }
             0x8 => {
@@ -180,12 +178,12 @@ impl Memory for MBC3 {
 }
 
 impl Loadable for MBC3 {
-  fn load_byte(&mut self, index: usize, value: u8) {
-    self.rom[index] = value;
+  fn load_byte(&mut self, address: usize, value: u8) {
+    self.rom[address] = value;
   }
 
-  fn load_bytes(&mut self, index: usize, values: &[u8]) {
-    self.rom.as_mut_slice()[index..(index + values.len())].copy_from_slice(values);
+  fn load_bytes(&mut self, address: usize, values: &[u8]) {
+    self.rom.as_mut_slice()[address..((address + values.len()))].copy_from_slice(values);
   }
 }
 
@@ -193,7 +191,6 @@ impl Loadable for MBC3 {
 mod tests {
   use super::*;
   use assert_hex::assert_eq_hex;
-  use crate::time::duration::RTCDuration;
 
   #[test]
   fn read_write_ram() {
@@ -302,7 +299,7 @@ mod tests {
     memory.write(0x4000, 0x0C); // Set RAM bank to RTC days high
     memory.write(0xA000, 0x01); // Write 361 days high (non-halted)
     memory.write(0x0000, 0xB); // Disable RAM
-    memory.tick();
+    memory.handle_tick(false);
     memory.write(0x4000, 0x08); // Set RAM bank to RTC seconds
     assert_eq!(memory.read(0xA000), 56); // Read seconds
     memory.write(0x4000, 0x09); // Set RAM bank to RTC minutes

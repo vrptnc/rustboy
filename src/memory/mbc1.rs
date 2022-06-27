@@ -24,35 +24,35 @@ impl MBC1 {
 }
 
 impl Loadable for MBC1 {
-  fn load_byte(&mut self, index: usize, value: u8) {
-    self.rom[index] = value;
+  fn load_byte(&mut self, address: usize, value: u8) {
+    self.rom[address] = value;
   }
 
-  fn load_bytes(&mut self, index: usize, values: &[u8]) {
-    self.rom.as_mut_slice()[index..(index + values.len())].copy_from_slice(values);
+  fn load_bytes(&mut self, address: usize, values: &[u8]) {
+    self.rom.as_mut_slice()[address..(address + values.len())].copy_from_slice(values);
   }
 }
 
 impl Memory for MBC1 {
-  fn read(&self, address: usize) -> u8 {
+  fn read(&self, address: u16) -> u8 {
     match address {
       0x0000..=0x3FFF => {
-        let address_in_rom = (address & 0x3FFF) | (if self.upper_bank_address_enabled { self.upper_bank_address << 19 } else { 0 });
+        let address_in_rom = ((address as usize) & 0x3FFF) | (if self.upper_bank_address_enabled { self.upper_bank_address << 19 } else { 0 });
         self.rom[address_in_rom]
       }
       0x4000..=0x7FFF => {
-        let address_in_rom = (address & 0x3FFF) | (self.lower_bank_address << 14) | (self.upper_bank_address << 19);
+        let address_in_rom = ((address as usize) & 0x3FFF) | (self.lower_bank_address << 14) | (self.upper_bank_address << 19);
         self.rom[address_in_rom]
       }
       0xA000..=0xBFFF => {
-        let address_in_ram = (address & 0x1FFF) | (if self.upper_bank_address_enabled { self.upper_bank_address << 13 } else { 0 });
+        let address_in_ram = ((address as usize) & 0x1FFF) | (if self.upper_bank_address_enabled { self.upper_bank_address << 13 } else { 0 });
         self.ram[address_in_ram]
       }
       _ => panic!("Can't read from address {:#06x} on MBC1", address)
     }
   }
 
-  fn write(&mut self, address: usize, value: u8) {
+  fn write(&mut self, address: u16, value: u8) {
     match address {
       0x0000..=0x1FFF => {
         self.ram_enabled = (value & 0x0F) == 0x0A;
@@ -71,7 +71,7 @@ impl Memory for MBC1 {
       }
       0xA000..=0xBFFF => {
         if self.ram_enabled {
-          let address_in_ram = (address & 0x1FFF) | (if self.upper_bank_address_enabled { self.upper_bank_address << 13 } else { 0 });
+          let address_in_ram = ((address as usize) & 0x1FFF) | (if self.upper_bank_address_enabled { self.upper_bank_address << 13 } else { 0 });
           self.ram[address_in_ram] = value;
         }
       }

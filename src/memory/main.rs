@@ -16,7 +16,7 @@ pub struct MainMemory<T> where T: Memory {
 }
 
 impl<T> Memory for MainMemory<T> where T: Memory {
-  fn read(&self, address: usize) -> u8 {
+  fn read(&self, address: u16) -> u8 {
     match address {
       0x0000..=0x7FFF => self.rom.read(address),
       0x8000..=0x9FFF => self.vram.read(address - 0x8000),
@@ -33,7 +33,7 @@ impl<T> Memory for MainMemory<T> where T: Memory {
     }
   }
 
-  fn write(&mut self, address: usize, value: u8) {
+  fn write(&mut self, address: u16, value: u8) {
     match address {
       0x0000..=0x7FFF => self.rom.write(address, value),
       0x8000..=0x9FFF => self.vram.write(address - 0x8000, value),
