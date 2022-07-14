@@ -2,9 +2,10 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 use byteorder::{LittleEndian, ReadBytesExt};
+use crate::cpu::interrupts::{Interrupt, InterruptControllerRef};
 use crate::cpu::opcode::Opcode;
 use crate::cpu::register::{ByteRegister, Registers, WordRegister};
-use crate::memory::memory::{Memory, MemoryRef};
+use crate::memory::memory::MemoryRef;
 use crate::time::time::ClockAware;
 use crate::util::bit_util::BitUtil;
 
@@ -56,18 +57,23 @@ struct InstructionContext {
 
 type Operation = Box<dyn FnOnce(&mut CPU)>;
 
+pub type CPURef = Rc<RefCell<CPU>>;
+
 pub struct CPU {
+  enabled: bool,
   context: InstructionContext,
   operations: VecDeque<Operation>,
   memory: MemoryRef,
+  interrupt_controller: InterruptControllerRef,
   registers: Registers,
-  ime: bool,
 }
 
 impl CPU {
-  pub fn new(memory: MemoryRef) -> CPU {
+  pub fn new(memory: MemoryRef, interrupt_controller: InterruptControllerRef) -> CPU {
     CPU {
+      enabled: true,
       memory,
+      interrupt_controller,
       context: InstructionContext {
         opcode: Opcode(0),
         byte_buffer: 0u8,
@@ -76,18 +82,19 @@ impl CPU {
       },
       operations: VecDeque::with_capacity(5),
       registers: Registers::new(),
-      ime: true,
     }
   }
 
-  fn check_interrupt(&mut self) {
-    if !self.ime {
-      return;
-    }
-    let memory = self.memory.borrow();
-    let interrupt_enables = memory.read(0xFFFF);
-    let interrupt_flags = memory.read(0xFF0F);
-    let interrupts_to_process = interrupt_enables & interrupt_flags;
+  pub fn enable(&mut self) {
+    self.enabled = true;
+  }
+
+  pub fn disable(&mut self) {
+    self.enabled = false;
+  }
+
+  pub fn enabled(&self) -> bool {
+    self.enabled
   }
 
   fn fetch_and_execute_instruction(&mut self) {
@@ -1578,7 +1585,7 @@ impl CPU {
         let bit = this.context.opcode.y_bits();
         CPU::move_byte(
           ByteLocation::Value(this.context.byte_buffer.set_bit(bit)),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::HL)
+          ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
         )(this);
       })
     );
@@ -1603,7 +1610,7 @@ impl CPU {
         let bit = this.context.opcode.y_bits();
         CPU::move_byte(
           ByteLocation::Value(this.context.byte_buffer.reset_bit(bit)),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::HL)
+          ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
         )(this);
       })
     );
@@ -1699,6 +1706,36 @@ impl CPU {
       WordLocation::Register(WordRegister::HL),
       WordLocation::Register(WordRegister::PC),
     )(self);
+  }
+
+  fn call_interrupt_routine(&mut self, interrupt: Interrupt) {
+    self.interrupt_controller.borrow_mut().clear_interrupt(interrupt);
+    self.interrupt_controller.borrow_mut().disable_interrupts();
+    self.operations.push_back(CPU::noop());
+    self.operations.push_back(
+      CPU::combine_operations(
+        CPU::decrement_word(WordLocation::Register(WordRegister::SP)),
+        CPU::move_byte(
+          ByteLocation::Register(ByteRegister::UpperPC),
+          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
+        ),
+      )
+    );
+    self.operations.push_back(
+      CPU::combine_operations(
+        CPU::decrement_word(WordLocation::Register(WordRegister::SP)),
+        CPU::move_byte(
+          ByteLocation::Register(ByteRegister::LowerPC),
+          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
+        ),
+      )
+    );
+    self.operations.push_back(
+      CPU::move_word(
+        WordLocation::Value(interrupt.get_routine_address()),
+        WordLocation::Register(WordRegister::PC),
+      )
+    );
   }
 
   fn call(&mut self) {
@@ -1810,7 +1847,7 @@ impl CPU {
 
   fn return_from_interrupt(&mut self) {
     self.return_from_call();
-    self.ime = true;
+    self.enable_interrupts();
   }
 
   fn return_conditionally(&mut self) {
@@ -1909,11 +1946,11 @@ impl CPU {
   }
 
   fn disable_interrupts(&mut self) {
-    self.ime = false;
+    self.interrupt_controller.borrow_mut().disable_interrupts();
   }
 
   fn enable_interrupts(&mut self) {
-    self.ime = true;
+    self.interrupt_controller.borrow_mut().enable_interrupts();
   }
 
   fn halt(&mut self) {
@@ -1929,8 +1966,13 @@ impl ClockAware for CPU {
   fn handle_tick(&mut self, _double_speed: bool) {
     if let Some(operation) = self.operations.pop_front() {
       operation(self);
-    } else {
-      self.fetch_and_execute_instruction();
+    } else if self.enabled {
+      let optional_interrupt = self.interrupt_controller.borrow().get_requested_interrupt();
+      if let Some(interrupt) = optional_interrupt {
+        self.call_interrupt_routine(interrupt);
+      } else {
+        self.fetch_and_execute_instruction();
+      }
     }
   }
 }
@@ -1941,12 +1983,18 @@ mod tests {
   use super::*;
   use crate::memory::memory::test::MockMemory;
   use test_case::test_case;
+  use crate::cpu::interrupts::InterruptController;
+
+  fn create_cpu() -> CPU {
+    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new(0x10000))));
+    let mut interrupt_controller = Rc::new(RefCell::new(InterruptController::new()));
+    CPU::new(memory, interrupt_controller)
+  }
 
   #[test]
   fn reg_to_reg_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
-    memory.borrow_mut().write(0x0000, 0x45);
+    let mut cpu = create_cpu();
+    cpu.memory.borrow_mut().write(0x0000, 0x45);
     cpu.registers.write_byte(ByteRegister::LowerHL, 0xAB);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::B), 0xAB);
@@ -1954,20 +2002,18 @@ mod tests {
 
   #[test]
   fn immediate_to_reg_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
-    memory.borrow_mut().write(0x0000, 0x06);
-    memory.borrow_mut().write(0x0001, 0xAB);
+    let mut cpu = create_cpu();
+    cpu.memory.borrow_mut().write(0x0000, 0x06);
+    cpu.memory.borrow_mut().write(0x0001, 0xAB);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::B), 0xAB);
   }
 
   #[test]
   fn indirect_to_reg_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
-    memory.borrow_mut().write(0x0000, 0x6E);
-    memory.borrow_mut().write(0xABCD, 0xEF);
+    let mut cpu = create_cpu();
+    cpu.memory.borrow_mut().write(0x0000, 0x6E);
+    cpu.memory.borrow_mut().write(0xABCD, 0xEF);
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::LowerHL), 0xEF);
@@ -1975,231 +2021,211 @@ mod tests {
 
   #[test]
   fn reg_to_indirect_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
     cpu.registers.write_byte(ByteRegister::A, 0xEF);
-    memory.borrow_mut().write(0x0000, 0x77);
+    cpu.memory.borrow_mut().write(0x0000, 0x77);
     cpu.ticks(2);
-    assert_eq!(memory.borrow().read(0xABCD), 0xEF);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0xEF);
   }
 
   #[test]
   fn immediate_to_indirect_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x36);
-    memory.borrow_mut().write(0x0001, 0xEF);
+    cpu.memory.borrow_mut().write(0x0000, 0x36);
+    cpu.memory.borrow_mut().write(0x0001, 0xEF);
     cpu.ticks(3);
-    assert_eq!(memory.borrow().read(0xABCD), 0xEF);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0xEF);
   }
 
   #[test]
   fn indirect_bc_to_reg_a_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::BC, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x0A);
-    memory.borrow_mut().write(0xABCD, 0x5A);
+    cpu.memory.borrow_mut().write(0x0000, 0x0A);
+    cpu.memory.borrow_mut().write(0xABCD, 0x5A);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), 0x5A);
   }
 
   #[test]
   fn indirect_de_to_reg_a_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::DE, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x1A);
-    memory.borrow_mut().write(0xABCD, 0x5A);
+    cpu.memory.borrow_mut().write(0x0000, 0x1A);
+    cpu.memory.borrow_mut().write(0xABCD, 0x5A);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), 0x5A);
   }
 
   #[test]
   fn indirect_c_with_offset_to_reg_a_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::C, 0xCD);
-    memory.borrow_mut().write(0x0000, 0xF2);
-    memory.borrow_mut().write(0xFFCD, 0x5A);
+    cpu.memory.borrow_mut().write(0x0000, 0xF2);
+    cpu.memory.borrow_mut().write(0xFFCD, 0x5A);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), 0x5A);
   }
 
   #[test]
   fn reg_a_to_indirect_c_with_offset_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x5A);
     cpu.registers.write_byte(ByteRegister::C, 0xCD);
-    memory.borrow_mut().write(0x0000, 0xE2);
+    cpu.memory.borrow_mut().write(0x0000, 0xE2);
     cpu.ticks(2);
-    assert_eq!(memory.borrow().read(0xFFCD), 0x5A);
+    assert_eq!(cpu.memory.borrow().read(0xFFCD), 0x5A);
   }
 
   #[test]
   fn immediate_indirect_with_offset_to_reg_a_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
-    memory.borrow_mut().write(0x0000, 0xF0);
-    memory.borrow_mut().write(0x0001, 0xCD);
-    memory.borrow_mut().write(0xFFCD, 0x5A);
+    let mut cpu = create_cpu();
+    cpu.memory.borrow_mut().write(0x0000, 0xF0);
+    cpu.memory.borrow_mut().write(0x0001, 0xCD);
+    cpu.memory.borrow_mut().write(0xFFCD, 0x5A);
     cpu.ticks(3);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), 0x5A);
   }
 
   #[test]
   fn reg_a_to_immediate_indirect_with_offset_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x5A);
-    memory.borrow_mut().write(0x0000, 0xE0);
-    memory.borrow_mut().write(0x0001, 0xCD);
+    cpu.memory.borrow_mut().write(0x0000, 0xE0);
+    cpu.memory.borrow_mut().write(0x0001, 0xCD);
     cpu.ticks(3);
-    assert_eq!(memory.borrow().read(0xFFCD), 0x5A);
+    assert_eq!(cpu.memory.borrow().read(0xFFCD), 0x5A);
   }
 
   #[test]
   fn immediate_indirect_to_reg_a_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
-    memory.borrow_mut().write(0x0000, 0xFA);
-    memory.borrow_mut().write(0x0001, 0xCD);
-    memory.borrow_mut().write(0x0002, 0xAB);
-    memory.borrow_mut().write(0xABCD, 0x5A);
+    let mut cpu = create_cpu();
+    cpu.memory.borrow_mut().write(0x0000, 0xFA);
+    cpu.memory.borrow_mut().write(0x0001, 0xCD);
+    cpu.memory.borrow_mut().write(0x0002, 0xAB);
+    cpu.memory.borrow_mut().write(0xABCD, 0x5A);
     cpu.ticks(4);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), 0x5A);
   }
 
   #[test]
   fn reg_a_to_immediate_indirect_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x5A);
-    memory.borrow_mut().write(0x0000, 0xEA);
-    memory.borrow_mut().write(0x0001, 0xCD);
-    memory.borrow_mut().write(0x0002, 0xAB);
+    cpu.memory.borrow_mut().write(0x0000, 0xEA);
+    cpu.memory.borrow_mut().write(0x0001, 0xCD);
+    cpu.memory.borrow_mut().write(0x0002, 0xAB);
     cpu.ticks(4);
-    assert_eq!(memory.borrow().read(0xABCD), 0x5A);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0x5A);
   }
 
 
   #[test]
   fn indirect_hl_to_reg_a_ld_and_increment() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x2A);
-    memory.borrow_mut().write(0xABCD, 0x5A);
+    cpu.memory.borrow_mut().write(0x0000, 0x2A);
+    cpu.memory.borrow_mut().write(0xABCD, 0x5A);
     cpu.ticks(2);
-    assert_eq!(memory.borrow().read(0xABCD), 0x5A);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0x5A);
     assert_eq!(cpu.registers.read_word(WordRegister::HL), 0xABCE);
   }
 
   #[test]
   fn indirect_hl_to_reg_a_ld_and_decrement() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x3A);
-    memory.borrow_mut().write(0xABCD, 0x5A);
+    cpu.memory.borrow_mut().write(0x0000, 0x3A);
+    cpu.memory.borrow_mut().write(0xABCD, 0x5A);
     cpu.ticks(2);
-    assert_eq!(memory.borrow().read(0xABCD), 0x5A);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0x5A);
     assert_eq!(cpu.registers.read_word(WordRegister::HL), 0xABCC);
   }
 
   #[test]
   fn reg_a_to_indirect_bc_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x5A);
     cpu.registers.write_word(WordRegister::BC, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x02);
+    cpu.memory.borrow_mut().write(0x0000, 0x02);
     cpu.ticks(2);
-    assert_eq!(memory.borrow().read(0xABCD), 0x5A);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0x5A);
   }
 
   #[test]
   fn reg_a_to_indirect_de_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x5A);
     cpu.registers.write_word(WordRegister::DE, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x12);
+    cpu.memory.borrow_mut().write(0x0000, 0x12);
     cpu.ticks(2);
-    assert_eq!(memory.borrow().read(0xABCD), 0x5A);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0x5A);
   }
 
   #[test]
   fn reg_a_to_indirect_hl_ld_and_increment() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x5A);
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x22);
+    cpu.memory.borrow_mut().write(0x0000, 0x22);
     cpu.ticks(2);
-    assert_eq!(memory.borrow().read(0xABCD), 0x5A);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0x5A);
     assert_eq!(cpu.registers.read_word(WordRegister::HL), 0xABCE);
   }
 
   #[test]
   fn reg_a_to_indirect_hl_ld_and_decrement() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x5A);
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x32);
+    cpu.memory.borrow_mut().write(0x0000, 0x32);
     cpu.ticks(2);
-    assert_eq!(memory.borrow().read(0xABCD), 0x5A);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0x5A);
     assert_eq!(cpu.registers.read_word(WordRegister::HL), 0xABCC);
   }
 
 
   #[test]
   fn immediate_to_reg_pair_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x5A);
-    memory.borrow_mut().write(0x0000, 0x21);
-    memory.borrow_mut().write(0x0001, 0x5A);
-    memory.borrow_mut().write(0x0002, 0x7B);
+    cpu.memory.borrow_mut().write(0x0000, 0x21);
+    cpu.memory.borrow_mut().write(0x0001, 0x5A);
+    cpu.memory.borrow_mut().write(0x0002, 0x7B);
     cpu.ticks(3);
     assert_eq!(cpu.registers.read_word(WordRegister::HL), 0x7B5A);
   }
 
   #[test]
   fn reg_hl_to_reg_sp_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xF9);
+    cpu.memory.borrow_mut().write(0x0000, 0xF9);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_word(WordRegister::SP), 0xABCD);
   }
 
   #[test]
   fn push_reg_pair_to_stack() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, 0xFFFE);
     cpu.registers.write_word(WordRegister::DE, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xD5);
+    cpu.memory.borrow_mut().write(0x0000, 0xD5);
     cpu.ticks(4);
-    assert_eq!(memory.borrow().read(0xFFFD), 0xAB);
-    assert_eq!(memory.borrow().read(0xFFFC), 0xCD);
+    assert_eq!(cpu.memory.borrow().read(0xFFFD), 0xAB);
+    assert_eq!(cpu.memory.borrow().read(0xFFFC), 0xCD);
     assert_eq!(cpu.registers.read_word(WordRegister::SP), 0xFFFC);
   }
 
   #[test]
   fn pop_stack_to_reg_pair() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, 0xFFFC);
-    memory.borrow_mut().write(0x0000, 0xD1);
-    memory.borrow_mut().write(0xFFFC, 0xCD);
-    memory.borrow_mut().write(0xFFFD, 0xAB);
+    cpu.memory.borrow_mut().write(0x0000, 0xD1);
+    cpu.memory.borrow_mut().write(0xFFFC, 0xCD);
+    cpu.memory.borrow_mut().write(0xFFFD, 0xAB);
     cpu.ticks(3);
     assert_eq!(cpu.registers.read_word(WordRegister::DE), 0xABCD);
     assert_eq!(cpu.registers.read_word(WordRegister::SP), 0xFFFE);
@@ -2207,12 +2233,11 @@ mod tests {
 
   #[test]
   fn reg_sp_plus_signed_immediate_to_hl_ld_writes_correct_result() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     // Check if carry flag is set correctly
     cpu.registers.write_word(WordRegister::SP, 0x0005);
-    memory.borrow_mut().write(0x0000, 0xF8);
-    memory.borrow_mut().write(0x0001, 0xFD);
+    cpu.memory.borrow_mut().write(0x0000, 0xF8);
+    cpu.memory.borrow_mut().write(0x0001, 0xFD);
     cpu.ticks(3);
     assert_eq!(cpu.registers.read_word(WordRegister::HL), 0x0002);
   }
@@ -2221,37 +2246,34 @@ mod tests {
   #[test_case(0x0FF8, 0x08, 0x20; "only half carry")]
   #[test_case(0xFFF8, 0x08, 0x30; "both carry flags")]
   fn reg_sp_plus_signed_immediate_to_hl_ld_writes_correct_flags(sp: u16, e: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, sp);
-    memory.borrow_mut().write(0x0000, 0xF8);
-    memory.borrow_mut().write(0x0001, e);
+    cpu.memory.borrow_mut().write(0x0000, 0xF8);
+    cpu.memory.borrow_mut().write(0x0001, e);
     cpu.ticks(3);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
   }
 
   #[test]
   fn reg_sp_to_immediate_indirect_ld() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, 0x7B5A);
-    memory.borrow_mut().write(0x0000, 0x08);
-    memory.borrow_mut().write(0x0001, 0xCD);
-    memory.borrow_mut().write(0x0002, 0xAB);
+    cpu.memory.borrow_mut().write(0x0000, 0x08);
+    cpu.memory.borrow_mut().write(0x0001, 0xCD);
+    cpu.memory.borrow_mut().write(0x0002, 0xAB);
     cpu.ticks(5);
-    assert_eq!(memory.borrow().read(0xABCD), 0x5A);
-    assert_eq!(memory.borrow().read(0xABCE), 0x7B);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0x5A);
+    assert_eq!(cpu.memory.borrow().read(0xABCE), 0x7B);
   }
 
   #[test_case(0xFC, 0x04, 0x00, 0xB0; "zero flag set correctly")]
   #[test_case(0xF0, 0xF0, 0xE0, 0x10; "carry set correctly")]
   #[test_case(0x08, 0x08, 0x10, 0x20; "half carry set correctly")]
   fn add_reg_to_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0x82);
+    cpu.memory.borrow_mut().write(0x0000, 0x82);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2261,11 +2283,10 @@ mod tests {
   #[test_case(0xF0, 0xF0, 0xE0, 0x10; "carry set correctly")]
   #[test_case(0x08, 0x08, 0x10, 0x20; "half carry set correctly")]
   fn add_immediate_to_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
-    memory.borrow_mut().write(0x0000, 0xC6);
-    memory.borrow_mut().write(0x0001, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xC6);
+    cpu.memory.borrow_mut().write(0x0001, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2275,12 +2296,11 @@ mod tests {
   #[test_case(0xF0, 0xF0, 0xE0, 0x10; "carry set correctly")]
   #[test_case(0x08, 0x08, 0x10, 0x20; "half carry set correctly")]
   fn add_indirect_hl_to_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x86);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0x86);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2290,12 +2310,11 @@ mod tests {
   #[test_case(0xF0, 0xEF, 0xE0, 0x30; "carry set correctly")]
   #[test_case(0x08, 0x07, 0x10, 0x20; "half carry set correctly")]
   fn add_reg_with_carry_to_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, 0x10);
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0x8A);
+    cpu.memory.borrow_mut().write(0x0000, 0x8A);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2305,13 +2324,12 @@ mod tests {
   #[test_case(0xF0, 0xEF, 0xE0, 0x30; "carry set correctly")]
   #[test_case(0x08, 0x07, 0x10, 0x20; "half carry set correctly")]
   fn add_immediate_with_carry_to_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
 
-    memory.borrow_mut().write(0x0000, 0xCE);
-    memory.borrow_mut().write(0x0001, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xCE);
+    cpu.memory.borrow_mut().write(0x0001, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2321,14 +2339,13 @@ mod tests {
   #[test_case(0xF0, 0x10, 0x01, 0x10; "carry set correctly")]
   #[test_case(0x08, 0x07, 0x10, 0x20; "half carry set correctly")]
   fn add_indirect_hl_with_carry_to_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
 
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x8E);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0x8E);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2338,11 +2355,10 @@ mod tests {
   #[test_case(0x1F, 0x3F, 0xE0, 0x50; "carry set correctly")]
   #[test_case(0xF1, 0xE3, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_reg_from_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0x92);
+    cpu.memory.borrow_mut().write(0x0000, 0x92);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2352,11 +2368,10 @@ mod tests {
   #[test_case(0x1F, 0x3F, 0xE0, 0x50; "carry set correctly")]
   #[test_case(0xF1, 0xE3, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_immediate_from_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
-    memory.borrow_mut().write(0x0000, 0xD6);
-    memory.borrow_mut().write(0x0001, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xD6);
+    cpu.memory.borrow_mut().write(0x0001, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2366,12 +2381,11 @@ mod tests {
   #[test_case(0x1F, 0x3F, 0xE0, 0x50; "carry set correctly")]
   #[test_case(0xF1, 0xE3, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_indirect_hl_from_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x96);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0x96);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2381,12 +2395,11 @@ mod tests {
   #[test_case(0x1F, 0x3E, 0xE0, 0x50; "carry set correctly")]
   #[test_case(0xF1, 0xE2, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_reg_with_carry_from_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, 0x10);
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0x9A);
+    cpu.memory.borrow_mut().write(0x0000, 0x9A);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2396,13 +2409,12 @@ mod tests {
   #[test_case(0x1F, 0x3E, 0xE0, 0x50; "carry set correctly")]
   #[test_case(0xF1, 0xE2, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_immediate_with_carry_from_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
 
-    memory.borrow_mut().write(0x0000, 0xDE);
-    memory.borrow_mut().write(0x0001, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xDE);
+    cpu.memory.borrow_mut().write(0x0001, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2412,14 +2424,13 @@ mod tests {
   #[test_case(0x1F, 0x3E, 0xE0, 0x50; "carry set correctly")]
   #[test_case(0xF1, 0xE2, 0x0E, 0x60; "half carry set correctly")]
   fn subtract_indirect_hl_with_carry_from_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
 
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x9E);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0x9E);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2428,11 +2439,10 @@ mod tests {
   #[test_case(0x5A, 0xA5, 0x00, 0xA0; "zero flag set correctly")]
   #[test_case(0xAC, 0xCA, 0x88, 0x20; "half carry set correctly")]
   fn and_reg_with_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0xA2);
+    cpu.memory.borrow_mut().write(0x0000, 0xA2);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2441,13 +2451,12 @@ mod tests {
   #[test_case(0x5A, 0xA5, 0x00, 0xA0; "zero flag set correctly")]
   #[test_case(0xAC, 0xCA, 0x88, 0x20; "half carry set correctly")]
   fn and_immediate_with_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
 
-    memory.borrow_mut().write(0x0000, 0xE6);
-    memory.borrow_mut().write(0x0001, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xE6);
+    cpu.memory.borrow_mut().write(0x0001, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2456,14 +2465,13 @@ mod tests {
   #[test_case(0x5A, 0xA5, 0x00, 0xA0; "zero flag set correctly")]
   #[test_case(0xAC, 0xCA, 0x88, 0x20; "half carry set correctly")]
   fn and_indirect_hl_with_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
 
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xA6);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xA6);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2472,11 +2480,10 @@ mod tests {
   #[test_case(0x00, 0x00, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0xAC, 0xCA, 0xEE, 0x00; "calculates OR correctly")]
   fn or_reg_with_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0xB2);
+    cpu.memory.borrow_mut().write(0x0000, 0xB2);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2485,13 +2492,12 @@ mod tests {
   #[test_case(0x00, 0x00, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0xAC, 0xCA, 0xEE, 0x00; "calculates OR correctly")]
   fn or_immediate_with_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
 
-    memory.borrow_mut().write(0x0000, 0xF6);
-    memory.borrow_mut().write(0x0001, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xF6);
+    cpu.memory.borrow_mut().write(0x0001, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2500,14 +2506,13 @@ mod tests {
   #[test_case(0x00, 0x00, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0xAC, 0xCA, 0xEE, 0x00; "calculates OR correctly")]
   fn or_indirect_hl_with_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
 
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xB6);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xB6);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2516,11 +2521,10 @@ mod tests {
   #[test_case(0xAE, 0xAE, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0xAC, 0xCA, 0x66, 0x00; "calculates XOR correctly")]
   fn xor_reg_with_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0xAA);
+    cpu.memory.borrow_mut().write(0x0000, 0xAA);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2529,13 +2533,12 @@ mod tests {
   #[test_case(0xAE, 0xAE, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0xAC, 0xCA, 0x66, 0x00; "calculates XOR correctly")]
   fn xor_immediate_with_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
 
-    memory.borrow_mut().write(0x0000, 0xEE);
-    memory.borrow_mut().write(0x0001, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xEE);
+    cpu.memory.borrow_mut().write(0x0001, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2544,14 +2547,13 @@ mod tests {
   #[test_case(0xAE, 0xAE, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0xAC, 0xCA, 0x66, 0x00; "calculates XOR correctly")]
   fn xor_indirect_hl_with_reg_a_and_write_to_reg_a(a: u8, value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
 
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xAE);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xAE);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2561,11 +2563,10 @@ mod tests {
   #[test_case(0x1F, 0x3F, 0x50; "carry set correctly")]
   #[test_case(0xF1, 0xE3, 0x60; "half carry set correctly")]
   fn compare_reg_with_reg_a(a: u8, value: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0xBA);
+    cpu.memory.borrow_mut().write(0x0000, 0xBA);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
   }
@@ -2574,11 +2575,10 @@ mod tests {
   #[test_case(0x1F, 0x3F, 0x50; "carry set correctly")]
   #[test_case(0xF1, 0xE3, 0x60; "half carry set correctly")]
   fn compare_immediate_with_reg_a(a: u8, value: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
-    memory.borrow_mut().write(0x0000, 0xFE);
-    memory.borrow_mut().write(0x0001, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xFE);
+    cpu.memory.borrow_mut().write(0x0001, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
   }
@@ -2587,12 +2587,11 @@ mod tests {
   #[test_case(0x1F, 0x3F, 0x50; "carry set correctly")]
   #[test_case(0xF1, 0xE3, 0x60; "half carry set correctly")]
   fn compare_indirect_hl_with_reg_a(a: u8, value: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, a);
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xBE);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xBE);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
   }
@@ -2600,11 +2599,10 @@ mod tests {
   #[test_case(0xFF, 0x00, 0x00, 0xA0; "zero flag set correctly and carry is not affected")]
   #[test_case(0x0F, 0x10, 0x10, 0x30; "half carry set correctly")]
   fn increment_reg(value: u8, result: u8, f_old: u8, f_new: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, f_old);
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0x14);
+    cpu.memory.borrow_mut().write(0x0000, 0x14);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f_new);
@@ -2613,25 +2611,23 @@ mod tests {
   #[test_case(0xFF, 0x00, 0x00, 0xA0; "zero flag set correctly and carry is not affected")]
   #[test_case(0x0F, 0x10, 0x10, 0x30; "half carry set correctly")]
   fn increment_indirect_hl(value: u8, result: u8, f_old: u8, f_new: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, f_old);
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x34);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0x34);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(3);
-    assert_eq!(memory.borrow().read(0xABCD), result);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f_new);
   }
 
   #[test_case(0x01, 0x00, 0x10, 0xD0; "zero flag set correctly and carry not affected")]
   #[test_case(0x10, 0x0F, 0x00, 0x60; "half carry set correctly")]
   fn decrement_reg(value: u8, result: u8, f_old: u8, f_new: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, f_old);
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0x15);
+    cpu.memory.borrow_mut().write(0x0000, 0x15);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f_new);
@@ -2640,26 +2636,24 @@ mod tests {
   #[test_case(0x01, 0x00, 0x10, 0xD0; "zero flag set correctly and carry not affected")]
   #[test_case(0x10, 0x0F, 0x00, 0x60; "half carry set correctly")]
   fn decrement_indirect_hl(value: u8, result: u8, f_old: u8, f_new: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, f_old);
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0x35);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0x35);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(3);
-    assert_eq!(memory.borrow().read(0xABCD), result);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f_new);
   }
 
   #[test_case(0xF01E, 0xF028, 0xE046, 0x80, 0x90; "carry set correctly and zero flag not affected")]
   #[test_case(0x1E1E, 0x2828, 0x4646, 0x80, 0xA0; "half carry set correctly")]
   fn add_reg_pair_to_reg_hl(hl: u16, value: u16, result: u16, f_old: u8, f_new: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, f_old);
     cpu.registers.write_word(WordRegister::HL, hl);
     cpu.registers.write_word(WordRegister::DE, value);
-    memory.borrow_mut().write(0x0000, 0x19);
+    cpu.memory.borrow_mut().write(0x0000, 0x19);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_word(WordRegister::HL), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f_new);
@@ -2668,11 +2662,10 @@ mod tests {
   #[test_case(0xFFDA, 0x26, 0x0000, 0x30; "carry set correctly and zero flag set to zero")]
   #[test_case(0x0FDA, 0x26, 0x1000, 0x20; "half carry set correctly")]
   fn add_immediate_to_reg_sp(sp: u16, value: u8, result: u16, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, sp);
-    memory.borrow_mut().write(0x0000, 0xE8);
-    memory.borrow_mut().write(0x0001, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xE8);
+    cpu.memory.borrow_mut().write(0x0001, value);
     cpu.ticks(4);
     assert_eq!(cpu.registers.read_word(WordRegister::SP), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2681,11 +2674,10 @@ mod tests {
   #[test_case(0xFFFF, 0x0000; "performs wrapping correctly")]
   #[test_case(0x0FDA, 0x0FDB; "increments correctly")]
   fn increment_reg_pair(sp: u16, result: u16) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, 0xF0);
     cpu.registers.write_word(WordRegister::SP, sp);
-    memory.borrow_mut().write(0x0000, 0x33);
+    cpu.memory.borrow_mut().write(0x0000, 0x33);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_word(WordRegister::SP), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0xF0);
@@ -2694,11 +2686,10 @@ mod tests {
   #[test_case(0x0000, 0xFFFF; "performs wrapping correctly")]
   #[test_case(0x0FDA, 0x0FD9; "decrements correctly")]
   fn decrement_reg_pair(sp: u16, result: u16) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, 0xF0);
     cpu.registers.write_word(WordRegister::SP, sp);
-    memory.borrow_mut().write(0x0000, 0x3B);
+    cpu.memory.borrow_mut().write(0x0000, 0x3B);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_word(WordRegister::SP), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0xF0);
@@ -2706,10 +2697,9 @@ mod tests {
 
   #[test]
   fn rotate_reg_a_left() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0xCA);
-    memory.borrow_mut().write(0x0000, 0x07);
+    cpu.memory.borrow_mut().write(0x0000, 0x07);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), 0x95);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0x10);
@@ -2718,11 +2708,10 @@ mod tests {
   #[test_case(0x00, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0xCA, 0x95, 0x10; "rotates left correctly and sets carry")]
   fn rotate_reg_left(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x02);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x02);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2731,23 +2720,21 @@ mod tests {
   #[test_case(0x00, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0xCA, 0x95, 0x10; "rotates left correctly and sets carry")]
   fn rotate_indirect_hl_left(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x06);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x06);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(4);
-    assert_eq!(memory.borrow().read(0xABCD), result);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
   }
 
   #[test]
   fn rotate_reg_a_right() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x53);
-    memory.borrow_mut().write(0x0000, 0x0F);
+    cpu.memory.borrow_mut().write(0x0000, 0x0F);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), 0xA9);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0x10);
@@ -2756,11 +2743,10 @@ mod tests {
   #[test_case(0x00, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0x53, 0xA9, 0x10; "rotates right correctly and sets carry")]
   fn rotate_reg_right(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x0A);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x0A);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2770,24 +2756,22 @@ mod tests {
   #[test_case(0x00, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0x53, 0xA9, 0x10; "rotates right correctly and sets carry")]
   fn rotate_indirect_hl_right(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x0E);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x0E);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(4);
-    assert_eq!(memory.borrow().read(0xABCD), result);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
   }
 
   #[test]
   fn rotate_reg_a_left_through_carry() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x4A);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
-    memory.borrow_mut().write(0x0000, 0x17);
+    cpu.memory.borrow_mut().write(0x0000, 0x17);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), 0x95);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0x00);
@@ -2796,12 +2780,11 @@ mod tests {
   #[test_case(0x80, 0x00, 0x00, 0x90; "zero flag set correctly")]
   #[test_case(0x4A, 0x95, 0x10, 0x00; "rotates left correctly and sets carry")]
   fn rotate_reg_left_through_carry(value: u8, result: u8, old_f: u8, new_f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::D, value);
     cpu.registers.write_byte(ByteRegister::F, old_f);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x12);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x12);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), new_f);
@@ -2810,25 +2793,23 @@ mod tests {
   #[test_case(0x80, 0x00, 0x00, 0x90; "zero flag set correctly")]
   #[test_case(0x4A, 0x95, 0x10, 0x00; "rotates left correctly and sets carry")]
   fn rotate_indirect_hl_left_through_carry(value: u8, result: u8, old_f: u8, new_f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
     cpu.registers.write_byte(ByteRegister::F, old_f);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x16);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x16);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(4);
-    assert_eq!(memory.borrow().read(0xABCD), result);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), new_f);
   }
 
   #[test]
   fn rotate_reg_a_right_through_carry() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0x52);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
-    memory.borrow_mut().write(0x0000, 0x1F);
+    cpu.memory.borrow_mut().write(0x0000, 0x1F);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), 0xA9);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0x00);
@@ -2837,12 +2818,11 @@ mod tests {
   #[test_case(0x01, 0x00, 0x00, 0x90; "zero flag set correctly")]
   #[test_case(0x52, 0xA9, 0x10, 0x00; "rotates right correctly and sets carry")]
   fn rotate_reg_right_through_carry(value: u8, result: u8, old_f: u8, new_f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::D, 0x52);
     cpu.registers.write_byte(ByteRegister::F, 0x10);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x1A);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x1A);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), 0xA9);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0x00);
@@ -2851,26 +2831,24 @@ mod tests {
   #[test_case(0x01, 0x00, 0x00, 0x90; "zero flag set correctly")]
   #[test_case(0x52, 0xA9, 0x10, 0x00; "rotates right correctly and sets carry")]
   fn rotate_indirect_hl_right_through_carry(value: u8, result: u8, old_f: u8, new_f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
     cpu.registers.write_byte(ByteRegister::F, old_f);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x1E);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x1E);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(4);
-    assert_eq!(memory.borrow().read(0xABCD), result);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), new_f);
   }
 
   #[test_case(0x80, 0x00, 0x90; "zero flag set correctly")]
   #[test_case(0xCA, 0x94, 0x10; "shifts left correctly and sets carry")]
   fn shift_reg_left(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x22);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x22);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2879,25 +2857,23 @@ mod tests {
   #[test_case(0x80, 0x00, 0x90; "zero flag set correctly")]
   #[test_case(0xCA, 0x94, 0x10; "shifts left correctly and sets carry")]
   fn shift_indirect_hl_left(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x26);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x26);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(4);
-    assert_eq!(memory.borrow().read(0xABCD), result);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
   }
 
   #[test_case(0x01, 0x00, 0x90; "zero flag set correctly")]
   #[test_case(0x53, 0x29, 0x10; "shifts right correctly and sets carry")]
   fn shift_reg_right(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x3A);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x3A);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2906,25 +2882,23 @@ mod tests {
   #[test_case(0x01, 0x00, 0x90; "zero flag set correctly")]
   #[test_case(0x53, 0x29, 0x10; "shifts right correctly and sets carry")]
   fn shift_indirect_hl_right(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x3E);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x3E);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(4);
-    assert_eq!(memory.borrow().read(0xABCD), result);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
   }
 
   #[test_case(0x01, 0x00, 0x90; "zero flag set correctly")]
   #[test_case(0xA2, 0xD1, 0x00; "shifts right correctly")]
   fn shift_reg_right_arithmetic(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x2A);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x2A);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2933,25 +2907,23 @@ mod tests {
   #[test_case(0x01, 0x00, 0x90; "zero flag set correctly")]
   #[test_case(0xA2, 0xD1, 0x00; "shifts right correctly")]
   fn shift_indirect_hl_right_arithmetic(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x2E);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x2E);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(4);
-    assert_eq!(memory.borrow().read(0xABCD), result);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
   }
 
   #[test_case(0x00, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0xA6, 0x6A, 0x00; "swaps correctly")]
   fn swap_reg(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::D, value);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x32);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x32);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
@@ -2960,25 +2932,23 @@ mod tests {
   #[test_case(0x00, 0x00, 0x80; "zero flag set correctly")]
   #[test_case(0xA6, 0x6A, 0x00; "swaps correctly")]
   fn swap_indirect_hl(value: u8, result: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xCB);
-    memory.borrow_mut().write(0x0001, 0x36);
-    memory.borrow_mut().write(0xABCD, value);
+    cpu.memory.borrow_mut().write(0x0000, 0xCB);
+    cpu.memory.borrow_mut().write(0x0001, 0x36);
+    cpu.memory.borrow_mut().write(0xABCD, value);
     cpu.ticks(4);
-    assert_eq!(memory.borrow().read(0xABCD), result);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), result);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), f);
   }
 
   #[test]
   fn get_reg_bit() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::D, 0xA5);
     let bits: Vec<(bool, u8)> = (0u8..8u8).map(|bit| {
-      memory.borrow_mut().write((2 * bit) as u16, 0xCB);
-      memory.borrow_mut().write((2 * bit + 1) as u16, 0x42 | (bit << 3));
+      cpu.memory.borrow_mut().write((2 * bit) as u16, 0xCB);
+      cpu.memory.borrow_mut().write((2 * bit + 1) as u16, 0x42 | (bit << 3));
       cpu.ticks(2);
       (!cpu.registers.read_byte(ByteRegister::F).get_bit(7), bit)
     }).collect();
@@ -2989,13 +2959,12 @@ mod tests {
 
   #[test]
   fn get_indirect_hl_bit() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0xABCD, 0xA5);
+    cpu.memory.borrow_mut().write(0xABCD, 0xA5);
     let bits: Vec<(bool, u8)> = (0u8..8u8).map(|bit| {
-      memory.borrow_mut().write((2 * bit) as u16, 0xCB);
-      memory.borrow_mut().write((2 * bit + 1) as u16, 0x46 | (bit << 3));
+      cpu.memory.borrow_mut().write((2 * bit) as u16, 0xCB);
+      cpu.memory.borrow_mut().write((2 * bit + 1) as u16, 0x46 | (bit << 3));
       cpu.ticks(3);
       (!cpu.registers.read_byte(ByteRegister::F).get_bit(7), bit)
     }).collect();
@@ -3006,12 +2975,11 @@ mod tests {
 
   #[test]
   fn set_reg_bit() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, 0xB0);
     [0, 2, 5, 7].iter().enumerate().for_each(|(index, bit)| {
-      memory.borrow_mut().write((2 * index) as u16, 0xCB);
-      memory.borrow_mut().write((2 * index + 1) as u16, 0xC2 | (bit << 3));
+      cpu.memory.borrow_mut().write((2 * index) as u16, 0xCB);
+      cpu.memory.borrow_mut().write((2 * index + 1) as u16, 0xC2 | (bit << 3));
       cpu.ticks(2);
     });
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), 0xA5);
@@ -3020,28 +2988,26 @@ mod tests {
 
   #[test]
   fn set_indirect_hl_bit() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
     cpu.registers.write_byte(ByteRegister::F, 0xB0);
     [0, 2, 5, 7].iter().enumerate().for_each(|(index, bit)| {
-      memory.borrow_mut().write((2 * index) as u16, 0xCB);
-      memory.borrow_mut().write((2 * index + 1) as u16, 0xC6 | (bit << 3));
+      cpu.memory.borrow_mut().write((2 * index) as u16, 0xCB);
+      cpu.memory.borrow_mut().write((2 * index + 1) as u16, 0xC6 | (bit << 3));
       cpu.ticks(4);
     });
-    assert_eq!(memory.borrow().read(0xABCD), 0xA5);
+    assert_eq!(cpu.memory.borrow().read(0xABCD), 0xA5);
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0xB0);
   }
 
   #[test]
   fn reset_reg_bit() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::D, 0xFF);
     cpu.registers.write_byte(ByteRegister::F, 0xB0);
     [1, 3, 4, 6].iter().enumerate().for_each(|(index, bit)| {
-      memory.borrow_mut().write((2 * index) as u16, 0xCB);
-      memory.borrow_mut().write((2 * index + 1) as u16, 0x82 | (bit << 3));
+      cpu.memory.borrow_mut().write((2 * index) as u16, 0xCB);
+      cpu.memory.borrow_mut().write((2 * index + 1) as u16, 0x82 | (bit << 3));
       cpu.ticks(2);
     });
     assert_eq!(cpu.registers.read_byte(ByteRegister::D), 0xA5);
@@ -3050,27 +3016,25 @@ mod tests {
 
   #[test]
   fn reset_indirect_hl_bit() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0xABCD, 0xFF);
+    cpu.memory.borrow_mut().write(0xABCD, 0xFF);
     cpu.registers.write_byte(ByteRegister::F, 0xB0);
     [1, 3, 4, 6].iter().enumerate().for_each(|(index, bit)| {
-      memory.borrow_mut().write((2 * index) as u16, 0xCB);
-      memory.borrow_mut().write((2 * index + 1) as u16, 0x86 | (bit << 3));
+      cpu.memory.borrow_mut().write((2 * index) as u16, 0xCB);
+      cpu.memory.borrow_mut().write((2 * index + 1) as u16, 0x86 | (bit << 3));
       cpu.ticks(4);
     });
-    assert_eq_hex!(memory.borrow().read(0xABCD), 0xA5);
+    assert_eq_hex!(cpu.memory.borrow().read(0xABCD), 0xA5);
     assert_eq_hex!(cpu.registers.read_byte(ByteRegister::F), 0xB0);
   }
 
   #[test]
   fn jump() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
-    memory.borrow_mut().write(0x0000, 0xC3);
-    memory.borrow_mut().write(0x0001, 0xCD);
-    memory.borrow_mut().write(0x0002, 0xAB);
+    let mut cpu = create_cpu();
+    cpu.memory.borrow_mut().write(0x0000, 0xC3);
+    cpu.memory.borrow_mut().write(0x0001, 0xCD);
+    cpu.memory.borrow_mut().write(0x0002, 0xAB);
     cpu.ticks(4);
 
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0xABCD);
@@ -3081,15 +3045,14 @@ mod tests {
   #[test_case(0x02, 0xE0; "jumps when carry not set")]
   #[test_case(0x03, 0x10; "jumps when carry set")]
   fn jump_conditional(condition: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, !f);
-    memory.borrow_mut().write(0x0000, 0xC2 | (condition << 3));
-    memory.borrow_mut().write(0x0001, 0xCD);
-    memory.borrow_mut().write(0x0002, 0xAB);
-    memory.borrow_mut().write(0x0003, 0xC2 | (condition << 3));
-    memory.borrow_mut().write(0x0004, 0xCD);
-    memory.borrow_mut().write(0x0005, 0xAB);
+    cpu.memory.borrow_mut().write(0x0000, 0xC2 | (condition << 3));
+    cpu.memory.borrow_mut().write(0x0001, 0xCD);
+    cpu.memory.borrow_mut().write(0x0002, 0xAB);
+    cpu.memory.borrow_mut().write(0x0003, 0xC2 | (condition << 3));
+    cpu.memory.borrow_mut().write(0x0004, 0xCD);
+    cpu.memory.borrow_mut().write(0x0005, 0xAB);
     cpu.ticks(3);
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0x0003);
 
@@ -3101,12 +3064,11 @@ mod tests {
 
   #[test]
   fn jump_relative() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
-    memory.borrow_mut().write(0x0000, 0x18);
-    memory.borrow_mut().write(0x0001, 0x08);
-    memory.borrow_mut().write(0x000A, 0x18);
-    memory.borrow_mut().write(0x000B, 0xFC);
+    let mut cpu = create_cpu();
+    cpu.memory.borrow_mut().write(0x0000, 0x18);
+    cpu.memory.borrow_mut().write(0x0001, 0x08);
+    cpu.memory.borrow_mut().write(0x000A, 0x18);
+    cpu.memory.borrow_mut().write(0x000B, 0xFC);
     cpu.ticks(6);
 
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0x0008);
@@ -3117,13 +3079,12 @@ mod tests {
   #[test_case(0x02, 0xE0; "jumps when carry not set")]
   #[test_case(0x03, 0x10; "jumps when carry set")]
   fn jump_conditional_relative(condition: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, !f);
-    memory.borrow_mut().write(0x0000, 0x20 | (condition << 3));
-    memory.borrow_mut().write(0x0001, 0x08);
-    memory.borrow_mut().write(0x0002, 0x20 | (condition << 3));
-    memory.borrow_mut().write(0x0003, 0x08);
+    cpu.memory.borrow_mut().write(0x0000, 0x20 | (condition << 3));
+    cpu.memory.borrow_mut().write(0x0001, 0x08);
+    cpu.memory.borrow_mut().write(0x0002, 0x20 | (condition << 3));
+    cpu.memory.borrow_mut().write(0x0003, 0x08);
     cpu.ticks(2);
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0x0002);
 
@@ -3134,10 +3095,9 @@ mod tests {
 
   #[test]
   fn jump_indirect_hl() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::HL, 0xABCD);
-    memory.borrow_mut().write(0x0000, 0xE9);
+    cpu.memory.borrow_mut().write(0x0000, 0xE9);
     cpu.tick();
 
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0xABCD);
@@ -3145,18 +3105,17 @@ mod tests {
 
   #[test]
   fn call() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, 0xFFFE);
     cpu.registers.write_word(WordRegister::PC, 0x1234);
-    memory.borrow_mut().write(0x1234, 0xCD);
-    memory.borrow_mut().write(0x1235, 0xCD);
-    memory.borrow_mut().write(0x1236, 0xAB);
+    cpu.memory.borrow_mut().write(0x1234, 0xCD);
+    cpu.memory.borrow_mut().write(0x1235, 0xCD);
+    cpu.memory.borrow_mut().write(0x1236, 0xAB);
     cpu.ticks(6);
 
     assert_eq!(cpu.registers.read_word(WordRegister::SP), 0xFFFC);
-    assert_eq!(memory.borrow().read(0xFFFD), 0x12);
-    assert_eq!(memory.borrow().read(0xFFFC), 0x37);
+    assert_eq!(cpu.memory.borrow().read(0xFFFD), 0x12);
+    assert_eq!(cpu.memory.borrow().read(0xFFFC), 0x37);
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0xABCD);
   }
 
@@ -3165,17 +3124,16 @@ mod tests {
   #[test_case(0x02, 0xE0; "calls when carry not set")]
   #[test_case(0x03, 0x10; "calls when carry set")]
   fn call_conditional(condition: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, 0xFFFE);
     cpu.registers.write_word(WordRegister::PC, 0x1234);
     cpu.registers.write_byte(ByteRegister::F, !f);
-    memory.borrow_mut().write(0x1234, 0xC4 | (condition << 3));
-    memory.borrow_mut().write(0x1235, 0xCD);
-    memory.borrow_mut().write(0x1236, 0xAB);
-    memory.borrow_mut().write(0x1237, 0xC4 | (condition << 3));
-    memory.borrow_mut().write(0x1238, 0xCD);
-    memory.borrow_mut().write(0x1239, 0xAB);
+    cpu.memory.borrow_mut().write(0x1234, 0xC4 | (condition << 3));
+    cpu.memory.borrow_mut().write(0x1235, 0xCD);
+    cpu.memory.borrow_mut().write(0x1236, 0xAB);
+    cpu.memory.borrow_mut().write(0x1237, 0xC4 | (condition << 3));
+    cpu.memory.borrow_mut().write(0x1238, 0xCD);
+    cpu.memory.borrow_mut().write(0x1239, 0xAB);
 
     cpu.ticks(3);
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0x1237);
@@ -3185,20 +3143,19 @@ mod tests {
 
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0xABCD);
     assert_eq!(cpu.registers.read_word(WordRegister::SP), 0xFFFC);
-    assert_eq!(memory.borrow().read(0xFFFD), 0x12);
-    assert_eq!(memory.borrow().read(0xFFFC), 0x3A);
+    assert_eq!(cpu.memory.borrow().read(0xFFFD), 0x12);
+    assert_eq!(cpu.memory.borrow().read(0xFFFC), 0x3A);
   }
 
   #[test]
   fn return_from_call() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, 0xFFFE);
     cpu.registers.write_word(WordRegister::PC, 0x1234);
-    memory.borrow_mut().write(0x1234, 0xCD);
-    memory.borrow_mut().write(0x1235, 0xCD);
-    memory.borrow_mut().write(0x1236, 0xAB);
-    memory.borrow_mut().write(0xABCD, 0xC9);
+    cpu.memory.borrow_mut().write(0x1234, 0xCD);
+    cpu.memory.borrow_mut().write(0x1235, 0xCD);
+    cpu.memory.borrow_mut().write(0x1236, 0xAB);
+    cpu.memory.borrow_mut().write(0xABCD, 0xC9);
     cpu.ticks(6);
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0xABCD);
 
@@ -3209,23 +3166,22 @@ mod tests {
 
   #[test]
   fn return_from_interrupt() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, 0xFFFE);
     cpu.registers.write_word(WordRegister::PC, 0x1234);
-    memory.borrow_mut().write(0x1234, 0xCD);
-    memory.borrow_mut().write(0x1235, 0xCD);
-    memory.borrow_mut().write(0x1236, 0xAB);
-    memory.borrow_mut().write(0xABCD, 0xF3);
-    memory.borrow_mut().write(0xABCE, 0xD9);
+    cpu.memory.borrow_mut().write(0x1234, 0xCD);
+    cpu.memory.borrow_mut().write(0x1235, 0xCD);
+    cpu.memory.borrow_mut().write(0x1236, 0xAB);
+    cpu.memory.borrow_mut().write(0xABCD, 0xF3);
+    cpu.memory.borrow_mut().write(0xABCE, 0xD9);
     cpu.ticks(6);
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0xABCD);
 
     cpu.tick();
-    assert_eq!(cpu.ime, false);
+    assert_eq!(cpu.interrupt_controller.borrow().interrupts_enabled(), false);
 
     cpu.ticks(4);
-    assert_eq!(cpu.ime, true);
+    assert_eq!(cpu.interrupt_controller.borrow().interrupts_enabled(), true);
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0x1237);
     assert_eq!(cpu.registers.read_word(WordRegister::SP), 0xFFFE);
   }
@@ -3235,15 +3191,14 @@ mod tests {
   #[test_case(0x02, 0xE0; "returns when carry not set")]
   #[test_case(0x03, 0x10; "returns when carry set")]
   fn return_conditionally(condition: u8, f: u8) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, 0xFFFE);
     cpu.registers.write_word(WordRegister::PC, 0x1234);
-    memory.borrow_mut().write(0x1234, 0xCD);
-    memory.borrow_mut().write(0x1235, 0xCD);
-    memory.borrow_mut().write(0x1236, 0xAB);
-    memory.borrow_mut().write(0xABCD, 0xC0 | (condition << 3));
-    memory.borrow_mut().write(0xABCE, 0xC0 | (condition << 3));
+    cpu.memory.borrow_mut().write(0x1234, 0xCD);
+    cpu.memory.borrow_mut().write(0x1235, 0xCD);
+    cpu.memory.borrow_mut().write(0x1236, 0xAB);
+    cpu.memory.borrow_mut().write(0xABCD, 0xC0 | (condition << 3));
+    cpu.memory.borrow_mut().write(0xABCE, 0xC0 | (condition << 3));
     cpu.ticks(6);
     assert_eq!(cpu.registers.read_word(WordRegister::PC), 0xABCD);
 
@@ -3266,23 +3221,21 @@ mod tests {
   #[test_case(6, 0x0030; "restart to 0x0030")]
   #[test_case(7, 0x0038; "restart to 0x0038")]
   fn restart(operand: u8, address: u16) {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_word(WordRegister::SP, 0xFFFE);
     cpu.registers.write_word(WordRegister::PC, 0x1234);
-    memory.borrow_mut().write(0x1234, 0xC7 | (operand << 3));
+    cpu.memory.borrow_mut().write(0x1234, 0xC7 | (operand << 3));
     cpu.ticks(4);
 
     assert_eq!(cpu.registers.read_word(WordRegister::SP), 0xFFFC);
-    assert_eq!(memory.borrow().read(0xFFFD), 0x12);
-    assert_eq!(memory.borrow().read(0xFFFC), 0x35);
+    assert_eq!(cpu.memory.borrow().read(0xFFFD), 0x12);
+    assert_eq!(cpu.memory.borrow().read(0xFFFC), 0x35);
     assert_eq!(cpu.registers.read_word(WordRegister::PC), address);
   }
 
   #[test]
   fn decimal_adjust_reg_a() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     let mut instruction_index = 0u16;
     (0u8..99u8).for_each(|x| {
       (0u8..99u8).for_each(|y| {
@@ -3297,10 +3250,10 @@ mod tests {
 
         cpu.registers.write_byte(ByteRegister::A, a);
         cpu.registers.write_byte(ByteRegister::D, d);
-        memory.borrow_mut().write(instruction_index, 0x82);
+        cpu.memory.borrow_mut().write(instruction_index, 0x82);
         instruction_index += 1;
         cpu.tick();
-        memory.borrow_mut().write(instruction_index, 0x27);
+        cpu.memory.borrow_mut().write(instruction_index, 0x27);
         instruction_index += 1;
         cpu.tick();
         let result_bcd_sum = cpu.registers.read_byte(ByteRegister::A);
@@ -3310,10 +3263,10 @@ mod tests {
 
         cpu.registers.write_byte(ByteRegister::A, a);
         cpu.registers.write_byte(ByteRegister::D, d);
-        memory.borrow_mut().write(instruction_index, 0x92);
+        cpu.memory.borrow_mut().write(instruction_index, 0x92);
         instruction_index += 1;
         cpu.tick();
-        memory.borrow_mut().write(instruction_index, 0x27);
+        cpu.memory.borrow_mut().write(instruction_index, 0x27);
         instruction_index += 1;
         cpu.tick();
         let result_bcd_diff = cpu.registers.read_byte(ByteRegister::A);
@@ -3327,11 +3280,10 @@ mod tests {
 
   #[test]
   fn ones_complement_reg_a() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::A, 0xA6);
     cpu.registers.write_byte(ByteRegister::F, 0x90);
-    memory.borrow_mut().write(0x0000, 0x2F);
+    cpu.memory.borrow_mut().write(0x0000, 0x2F);
     cpu.tick();
 
     assert_eq!(cpu.registers.read_byte(ByteRegister::A), 0x59);
@@ -3340,11 +3292,10 @@ mod tests {
 
   #[test]
   fn flip_carry() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, 0x80);
-    memory.borrow_mut().write(0x0000, 0x3F);
-    memory.borrow_mut().write(0x0001, 0x3F);
+    cpu.memory.borrow_mut().write(0x0000, 0x3F);
+    cpu.memory.borrow_mut().write(0x0001, 0x3F);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0x90);
     cpu.tick();
@@ -3353,24 +3304,22 @@ mod tests {
 
   #[test]
   fn set_carry() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
+    let mut cpu = create_cpu();
     cpu.registers.write_byte(ByteRegister::F, 0x80);
-    memory.borrow_mut().write(0x0000, 0x37);
+    cpu.memory.borrow_mut().write(0x0000, 0x37);
     cpu.tick();
     assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0x90);
   }
 
   #[test]
   fn disable_enable_interrupts() {
-    let mut memory: MemoryRef = Rc::new(RefCell::new(Box::new(MockMemory::new())));
-    let mut cpu = CPU::new(Rc::clone(&memory));
-    cpu.ime = true;
-    memory.borrow_mut().write(0x0000, 0xF3);
-    memory.borrow_mut().write(0x0001, 0xFB);
+    let mut cpu = create_cpu();
+    cpu.interrupt_controller.borrow_mut().enable_interrupts();
+    cpu.memory.borrow_mut().write(0x0000, 0xF3);
+    cpu.memory.borrow_mut().write(0x0001, 0xFB);
     cpu.tick();
-    assert_eq!(cpu.ime, false);
+    assert_eq!(cpu.interrupt_controller.borrow().interrupts_enabled(), false);
     cpu.tick();
-    assert_eq!(cpu.ime, true);
+    assert_eq!(cpu.interrupt_controller.borrow().interrupts_enabled(), true);
   }
 }

@@ -61,13 +61,13 @@ pub mod test {
   use crate::memory::memory::Memory;
 
   pub struct MockMemory {
-    bytes: [u8; 0x10000],
+    bytes: Vec<u8>,
   }
 
   impl MockMemory {
-    pub fn new() -> MockMemory {
+    pub fn new(bytes: usize) -> MockMemory {
       MockMemory {
-        bytes: [0; 0x10000]
+        bytes: vec![0; bytes]
       }
     }
   }
