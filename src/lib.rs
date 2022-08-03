@@ -1,5 +1,7 @@
 extern crate core;
 
+mod emulator;
+mod renderer;
 mod util;
 mod memory;
 mod cpu;

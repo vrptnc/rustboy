@@ -1,5 +1,7 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use crate::CPURef;
-use crate::features::lcd::LCDRef;
+use crate::features::lcd::{LCDMode, LCDRef};
 use crate::memory::memory::{Memory, MemoryRef};
 use crate::time::time::ClockAware;
 use crate::util::bit_util::BitUtil;
@@ -26,8 +28,11 @@ enum DMATransfer {
   },
 }
 
-struct DMA {
+pub type DMARef = Rc<RefCell<DMA>>;
+
+pub struct DMA {
   memory: Option<MemoryRef>,
+  lcd: Option<LCDRef>,
   cpu: Option<CPURef>,
   dma: u8,
   high_source_address: u8,
@@ -43,6 +48,7 @@ impl DMA {
   pub fn new() -> DMA {
     DMA {
       memory: None,
+      lcd: None,
       cpu: None,
       dma: 0,
       high_source_address: 0,
@@ -57,6 +63,10 @@ impl DMA {
 
   pub fn set_memory(&mut self, memory: MemoryRef) {
     self.memory = Some(memory);
+  }
+
+  pub fn set_lcd(&mut self, lcd: LCDRef) {
+    self.lcd = Some(lcd);
   }
 
   pub fn set_cpu(&mut self, cpu: CPURef) {
@@ -114,9 +124,8 @@ impl ClockAware for DMA {
           bytes_to_transfer,
           ref mut in_progress
         } => {
-          let in_hblank = (self.memory.as_ref().unwrap().borrow().read(0xFF41) & 0x03) == 0;
           let cpu = self.cpu.as_ref().unwrap();
-          if in_hblank {
+          if let LCDMode::HBlank = self.lcd.as_ref().unwrap().borrow().get_mode() {
             if double_speed {
               self.double_speed_toggle = !self.double_speed_toggle;
               if self.double_speed_toggle {

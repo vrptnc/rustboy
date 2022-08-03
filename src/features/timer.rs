@@ -1,7 +1,11 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use crate::time::time::ClockAware;
 use crate::cpu::interrupts::{Interrupt, InterruptControllerRef};
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
+
+pub type TimerRef = Rc<RefCell<Timer>>;
 
 pub struct Timer {
   interrupt_controller: InterruptControllerRef,
@@ -11,6 +15,20 @@ pub struct Timer {
   timer_controller: u8,
   timer_counter: u8,
   enabled: bool,
+}
+
+impl Timer {
+  pub fn new(interrupt_controller: InterruptControllerRef) -> Timer {
+    Timer {
+      interrupt_controller,
+      clock_pulse_bit: 0,
+      divider: 0,
+      timer_modulo: 0,
+      timer_controller: 0,
+      timer_counter: 0,
+      enabled: false
+    }
+  }
 }
 
 impl ClockAware for Timer {
