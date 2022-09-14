@@ -1,3 +1,7 @@
+use std::iter::{Map, StepBy};
+use std::ops::Range;
+use num::cast::AsPrimitive;
+
 const ByteReversalTable: [u8; 0x100] = [
   0x00, 0x80, 0x40, 0xC0, 0x20, 0xA0, 0x60, 0xE0,
   0x10, 0x90, 0x50, 0xD0, 0x30, 0xB0, 0x70, 0xF0,
@@ -33,13 +37,62 @@ const ByteReversalTable: [u8; 0x100] = [
   0x1F, 0x9F, 0x5F, 0xDF, 0x3F, 0xBF, 0x7F, 0xFF
 ];
 
+pub struct UnsignedCrumbIterator<T, const BITS: u32> where
+  T: AsPrimitive<u8> + Copy + Clone + std::ops::Shr<u32, Output=T> {
+  value: T,
+  current_bit: u32,
+  current_last_bit: u32,
+}
+
+impl<T, const BITS: u32> UnsignedCrumbIterator<T, BITS> where
+  T: AsPrimitive<u8> + Copy + Clone + std::ops::Shr<u32, Output=T> {
+  pub fn new(value: T) -> UnsignedCrumbIterator<T, BITS> {
+    UnsignedCrumbIterator {
+      value,
+      current_bit: 0,
+      current_last_bit: BITS,
+    }
+  }
+}
+
+impl<T, const BITS: u32> Iterator for UnsignedCrumbIterator<T, BITS> where
+  T: AsPrimitive<u8> + Copy + Clone + std::ops::Shr<u32, Output=T> {
+  type Item = u8;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    if self.current_bit >= BITS {
+      None
+    } else {
+      let result = ((self.value >> self.current_bit).as_()) & 0x3;
+      self.current_last_bit += 2;
+      Some(result as u8)
+    }
+  }
+}
+
+impl<T, const BITS: u32> DoubleEndedIterator for UnsignedCrumbIterator<T, BITS> where
+  T: AsPrimitive<u8> + Copy + Clone + std::ops::Shr<u32, Output=T> {
+  fn next_back(&mut self) -> Option<Self::Item> {
+    if self.current_last_bit == 0 {
+      None
+    } else {
+      self.current_last_bit -= 2;
+      let result = ((self.value >> self.current_last_bit).as_()) & 0x3;
+      Some(result as u8)
+    }
+  }
+}
+
 pub trait BitUtil {
+  type CrumbIterator: DoubleEndedIterator<Item=u8>;
+
   fn compose(bits: &[(bool, u8)]) -> Self;
   fn get_bit(&self, bit: u8) -> bool;
   fn set_bit(&self, bit: u8) -> Self;
   fn reset_bit(&self, bit: u8) -> Self;
   fn get_lower_byte(&self) -> u8;
   fn get_upper_byte(&self) -> u8;
+  fn crumbs(&self) -> Self::CrumbIterator;
 }
 
 pub trait ByteUtil {
@@ -48,6 +101,8 @@ pub trait ByteUtil {
 }
 
 impl BitUtil for u8 {
+  type CrumbIterator = UnsignedCrumbIterator<u8, 8>;
+
   fn compose(bits: &[(bool, u8)]) -> Self {
     bits.iter().map(|a| {
       (a.0 as u8) << a.1
@@ -75,10 +130,13 @@ impl BitUtil for u8 {
   fn get_upper_byte(&self) -> u8 {
     0
   }
+
+  fn crumbs(&self) -> Self::CrumbIterator {
+    UnsignedCrumbIterator::new(*self)
+  }
 }
 
 impl ByteUtil for u8 {
-
   fn interleave_with(&self, byte: u8) -> u16 {
     let mut x = *self as u16;
     let mut y = byte as u16;
@@ -93,11 +151,13 @@ impl ByteUtil for u8 {
   }
 
   fn reverse(&self) -> u8 {
-    ByteReversalTable[*self]
+    ByteReversalTable[*self as usize]
   }
 }
 
 impl BitUtil for u16 {
+  type CrumbIterator = UnsignedCrumbIterator<u16, 16>;
+
   fn compose(bits: &[(bool, u8)]) -> Self {
     bits.iter().map(|a| {
       (a.0 as u16) << a.1
@@ -125,9 +185,15 @@ impl BitUtil for u16 {
   fn get_upper_byte(&self) -> u8 {
     (*self >> 8) as u8
   }
+
+  fn crumbs(&self) -> Self::CrumbIterator {
+    UnsignedCrumbIterator::new(*self)
+  }
 }
 
 impl BitUtil for usize {
+  type CrumbIterator = UnsignedCrumbIterator<usize, { usize::BITS }>;
+
   fn compose(bits: &[(bool, u8)]) -> Self {
     bits.iter().map(|a| {
       (a.0 as usize) << a.1
@@ -154,6 +220,10 @@ impl BitUtil for usize {
 
   fn get_upper_byte(&self) -> u8 {
     (*self >> 8) as u8
+  }
+
+  fn crumbs(&self) -> Self::CrumbIterator {
+    UnsignedCrumbIterator::new(*self)
   }
 }
 

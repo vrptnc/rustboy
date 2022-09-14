@@ -5,7 +5,7 @@ mod renderer;
 mod util;
 mod memory;
 mod cpu;
-mod features;
+mod controllers;
 mod time;
 mod infrastructure;
 

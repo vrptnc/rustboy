@@ -1,12 +1,12 @@
-use std::iter::Map;
+use std::cell::RefCell;
+use std::iter;
+use std::iter::{Map, Rev, Skip};
 use std::ops::Range;
+use std::rc::Rc;
 use crate::memory::memory::Memory;
 use crate::renderer::renderer::{ColorIndex, Point, TileAddressingMode, TileMapIndex};
-use crate::util::bit_util::BitUtil;
-
-const BANK_SIZE: usize = 0x2000;
-const START_ADDRESS: u16 = 0x8000;
-const END_ADDRESS: u16 = 0x9FFF;
+use crate::util::bit_util::{BitUtil, ByteUtil, UnsignedCrumbIterator};
+use crate::util::iterator::SizedIterator;
 
 #[derive(Copy, Clone)]
 pub struct TileAttributes(u8);
@@ -24,133 +24,179 @@ impl TileAttributes {
     self.0.get_bit(5)
   }
 
-  pub fn tile_bank_number(&self) -> u8 {
+  pub fn tile_bank_index(&self) -> u8 {
     self.0.get_bit(3) as u8
   }
-}
 
-pub struct TileRow(u8, u8);
-
-impl TileRow {
-  pub fn color_index_for_pixel(&self, u8: pixel) -> ColorIndex {
-    ((self.1.get_bit(7 - pixel) as u8) << 1) |
-      (self.0.get_bit(7 - pixel) as u8)
+  pub fn palette_index(&self) -> u8 {
+    self.0 & 0x7
   }
 }
 
-struct Tile {
-  chr_code: u8,
-  attributes: u8,
+#[derive(Copy, Clone)]
+pub struct Tile {
+  pub chr_code: u8,
+  pub attributes: TileAttributes,
 }
 
-pub struct TileDataMap<'a> {
-  data_block_1_bank_1: &'a [u8],
-  data_block_1_bank_2: &'a [u8],
-  data_block_2: &'a [u8],
+#[derive(Copy, Clone)]
+pub struct TileData<'a> {
+  bytes: &'a [u8],
 }
 
-impl<'a> TileDataMap<'a> {
-
+impl<'a> TileData<'a> {
+  pub fn get_color_indices(&self, row_offset: u8, flip_horizontal: bool, flip_vertical: bool) -> impl Iterator<Item=u8> + 'a {
+    let (byte1, byte2) = match (flip_horizontal, flip_vertical) {
+      (false, false) => (self.bytes[2 * row_offset as usize], self.bytes[2 * row_offset as usize + 1]),
+      (false, true) => (self.bytes[14 - 2 * row_offset as usize], self.bytes[15 - 2 * row_offset as usize]),
+      (true, false) => (self.bytes[2 * row_offset as usize + 1], self.bytes[2 * row_offset as usize]),
+      (true, true) => (self.bytes[15 - 2 * row_offset as usize], self.bytes[14 - 2 * row_offset as usize]),
+    };
+    byte1.interleave_with(byte2).crumbs().rev()
+  }
 }
 
-pub struct TileMap<'a> {
-  chr_codes: &'a [u8],
-  attributes: &'a [u8],
+pub struct TileDataView<'a> {
+  block_1: [&'a [u8]; 2],
+  block_2: [&'a [u8]; 2],
 }
 
-impl<'a> TileMap<'a> {
+impl<'a> TileDataView<'a> {
+  pub fn get_tile_data(&self, tile_bank_index: u8, tile_index: u8) -> TileData {
+    match tile_index {
+      0..=127 => {
+        let byte_offset = 16 * tile_index as usize;
+        TileData {
+          bytes: &self.block_1[tile_bank_index as usize][byte_offset..byte_offset + 16]
+        }
+      }
+      128..=255 => {
+        let byte_offset = 16 * (tile_index - 128) as usize;
+        TileData {
+          bytes: &self.block_2[tile_bank_index as usize][byte_offset..byte_offset + 16]
+        }
+      }
+      _ => panic!("Can't access tile data for tile index {}", tile_index)
+    }
+  }
+}
+
+pub struct TileMapView<'a> {
+  bytes: [&'a [u8]; 2],
+}
+
+impl<'a> TileMapView<'a> {
   const TILES_PER_ROW: u8 = 32;
   const TILES_PER_COLUMN: u8 = 32;
   const TILE_WIDTH: u8 = 8;
   const TILE_HEIGHT: u8 = 8;
   const TILES_PER_SCANLINE: u8 = 20;
+  const FRAME_ROWS: u8 = 144;
+  const FRAME_COLUMNS: u8 = 160;
 
-  pub fn background_tiles_for_line(&self, line: u8, background_origin: Point) -> impl Iterator<Item=Tile> {
-    let tile_map_line = line.wrapping_add(background_origin.y);
-    let tile_map_row = tile_map_line / TileMap::TILE_HEIGHT;
-    let tile_map_column = background_origin.x / TileMap::TILE_WIDTH;
+  pub fn row(&'a self, row: u8) -> impl Iterator<Item=Tile> + Clone + 'a {
+    let tile_offset = (row * TileMapView::TILES_PER_ROW) as usize;
 
-    (0..TileMap::TILES_PER_SCANLINE)
-      .map(move |tile_offset| (tile_map_row * TileMap::TILES_PER_ROW) + ((tile_map_column + tile_offset) % TileMap::TILES_PER_ROW))
-      .map(|tile_index| Tile {
-        chr_code: self.chr_codes[tile_index],
-        attributes: self.attributes[tile_index],
+    (0..TileMapView::TILES_PER_ROW)
+      .map(move |tile_index| Tile {
+        chr_code: self.bytes[0][tile_offset + tile_index as usize],
+        attributes: TileAttributes(self.bytes[1][tile_offset + tile_index as usize]),
       })
   }
 }
 
+pub type VRAMRef = Rc<RefCell<VRAM>>;
+
 pub struct VRAM {
-  bytes: [[u8; BANK_SIZE]; 2],
   bank_index: u8,
+  bytes: [[u8; VRAM::BANK_SIZE]; 2],
 }
 
 impl VRAM {
+  const START_ADDRESS: u16 = 0x8000;
+  const END_ADDRESS: u16 = 0x9FFF;
+  const BANK_INDEX_ADDRESS: u16 = 0xFF4F;
+  const BANK_SIZE: usize = 0x2000;
+
   pub fn new() -> VRAM {
     VRAM {
-      bytes: [[0; BANK_SIZE]; 2],
       bank_index: 0,
+      bytes: [[0; VRAM::BANK_SIZE]; 2],
     }
   }
 
-  pub fn tile_map(&self, tile_map_index: u8) -> TileMap {
-    let tile_map_offset: usize = match tile_map_index {
-      0 => 0x1800,
-      1 => 0x1C00,
-      _ => panic!("Can't access tile map at index {}", tile_map_index)
-    };
-    TileMap {
-      chr_codes: &self.bytes[0][tile_map_offset..(tile_map_offset + 0x400)],
-      attributes: &self.bytes[1][tile_map_offset..(tile_map_offset + 0x400)],
+  pub fn tile_map(&self, tile_map_index: TileMapIndex) -> TileMapView {
+    match tile_map_index {
+      TileMapIndex::TileMap1 => TileMapView {
+        bytes: [&self.bytes[0][0x1800..0x1C00], &self.bytes[1][0x1800..0x1C00]]
+      },
+      TileMapIndex::TileMap2 => TileMapView {
+        bytes: [&self.bytes[0][0x1C00..0x2000], &self.bytes[1][0x1C00..0x2000]]
+      }
     }
   }
 
-  pub fn tile_data_map(&self, addressing_mode: TileAddressingMode) -> TileDataMap {
+  pub fn tile_data(&self, addressing_mode: TileAddressingMode) -> TileDataView {
     match addressing_mode {
-      TileAddressingMode::Mode8000 => TileDataMap {
-        data_block_1: &self.bytes[..0x800],
-        data_block_2: &self.bytes[0x800..0x1000],
-      }
-      TileAddressingMode::Mode8800 => TileDataMap {
-
+      TileAddressingMode::Mode8000 => TileDataView {
+        block_1: [&self.bytes[0][0..0x800], &self.bytes[1][0..0x800]],
+        block_2: [&self.bytes[0][0x800..0x1000], &self.bytes[1][0x800..0x1000]],
+      },
+      TileAddressingMode::Mode8800 => TileDataView {
+        block_1: [&self.bytes[0][0x1000..0x1800], &self.bytes[1][0x1000..0x1800]],
+        block_2: [&self.bytes[0][0x800..0x1000], &self.bytes[1][0x800..0x1000]],
       }
     }
-  }
-
-  pub fn get_background_line(&self, line: u8, tile_map_index: TileMapIndex, addressing_mode: TileAddressingMode) -> impl Iterator<Item=u8> + '_ {
-    let tile_map_offset: usize = if tile_map_index == 0 { 0x1800 } else { 0x1C00 };
-    let tile_row = (line % 8) as usize;
-    (8 * tile_row..(8 * tile_row + 32))
-      .map(move |tile_index| {
-        let tile_chr_code = self.bytes[tile_map_offset + tile_index][0];
-        let tile_attribute = TileAttributes(self.bytes[tile_map_offset + tile_index][1]);
-        let tile_data_index = match addressing_mode {
-          TileAddressingMode::Unsigned => tile_chr_code as usize,
-          TileAddressingMode::Signed => 0x1000(tile_chr_code as i8 as u8).wrapping_add(0x1000)
-        };
-        tile_data_index
-      })
   }
 }
 
 impl Memory for VRAM {
   fn read(&self, address: u16) -> u8 {
     match address {
-      START_ADDRESS..=END_ADDRESS => {
-        self.bytes[self.bank_index as usize][(address - START_ADDRESS) as usize]
+      VRAM::START_ADDRESS..=VRAM::END_ADDRESS => {
+        self.bytes[self.bank_index as usize][(address - VRAM::START_ADDRESS) as usize]
       }
-      0xFF4F => self.bank_index,
+      VRAM::BANK_INDEX_ADDRESS => self.bank_index,
       _ => panic!("Can't read address {} from VRAM", address)
     }
   }
 
   fn write(&mut self, address: u16, value: u8) {
     match address {
-      START_ADDRESS..=END_ADDRESS => {
-        self.bytes[self.bank_index as usize][(address - START_ADDRESS) as usize] = value
+      VRAM::START_ADDRESS..=VRAM::END_ADDRESS => {
+        self.bytes[self.bank_index as usize][(address - VRAM::START_ADDRESS) as usize] = value
       }
-      0xFF4F => self.bank_index = value & 0x01,
+      VRAM::BANK_INDEX_ADDRESS => self.bank_index = value & 0x01,
       _ => panic!("Can't write to address {} in VRAM", address)
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use assert_hex::assert_eq_hex;
+  use super::*;
+
+  fn write_test_data_to_vram(vram: &mut VRAM) {
+    //Set tile bank to 0
+    // vram.write()
+  }
+
+  #[test]
+  fn set_vram_bank() {
+    let mut vram = VRAM::new();
+    vram.write(VRAM::BANK_INDEX_ADDRESS, 0);
+    vram.write(VRAM::START_ADDRESS, 0xAB);
+    vram.write(VRAM::BANK_INDEX_ADDRESS, 1);
+    vram.write(VRAM::START_ADDRESS, 0xCD);
+    assert_eq_hex!(vram.read(VRAM::START_ADDRESS), 0xCD);
+    vram.write(VRAM::BANK_INDEX_ADDRESS, 0);
+    assert_eq_hex!(vram.read(VRAM::START_ADDRESS), 0xAB);
+  }
+
+  #[test]
+  fn get_tile_data_view() {
+    let mut vram = VRAM::new();
   }
 }
 

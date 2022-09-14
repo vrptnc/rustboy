@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use crate::CPURef;
-use crate::features::lcd::{LCDMode, LCDRef};
+use crate::controllers::lcd::{LCDMode, LCDControllerRef};
 use crate::memory::memory::{Memory, MemoryRef};
 use crate::time::time::ClockAware;
 use crate::util::bit_util::BitUtil;
@@ -28,11 +28,11 @@ enum DMATransfer {
   },
 }
 
-pub type DMARef = Rc<RefCell<DMA>>;
+pub type DMAControllerRef = Rc<RefCell<DMAController>>;
 
-pub struct DMA {
+pub struct DMAController {
   memory: Option<MemoryRef>,
-  lcd: Option<LCDRef>,
+  lcd: Option<LCDControllerRef>,
   cpu: Option<CPURef>,
   dma: u8,
   high_source_address: u8,
@@ -44,9 +44,9 @@ pub struct DMA {
   double_speed_toggle: bool,
 }
 
-impl DMA {
-  pub fn new() -> DMA {
-    DMA {
+impl DMAController {
+  pub fn new() -> DMAController {
+    DMAController {
       memory: None,
       lcd: None,
       cpu: None,
@@ -65,7 +65,7 @@ impl DMA {
     self.memory = Some(memory);
   }
 
-  pub fn set_lcd(&mut self, lcd: LCDRef) {
+  pub fn set_lcd(&mut self, lcd: LCDControllerRef) {
     self.lcd = Some(lcd);
   }
 
@@ -74,7 +74,7 @@ impl DMA {
   }
 }
 
-impl ClockAware for DMA {
+impl ClockAware for DMAController {
   fn handle_tick(&mut self, double_speed: bool) {
     if let Some(ref mut active_transfer) = self.active_transfer {
       let memory = self.memory.as_ref().unwrap();
@@ -159,7 +159,7 @@ impl ClockAware for DMA {
   }
 }
 
-impl Memory for DMA {
+impl Memory for DMAController {
   fn read(&self, address: u16) -> u8 {
     match address {
       0xFF46 => self.dma,
@@ -238,8 +238,8 @@ mod tests {
     memory
   }
 
-  fn create_dma() -> DMA {
-    let mut dma = DMA::new();
+  fn create_dma() -> DMAController {
+    let mut dma = DMAController::new();
     let memory: MemoryRef = Rc::new(RefCell::new(Box::new(create_memory())));
     let interrupt_controller = Rc::new(RefCell::new(InterruptController::new()));
     let cpu = Rc::new(RefCell::new(CPU::new(Rc::clone(&memory), interrupt_controller)));

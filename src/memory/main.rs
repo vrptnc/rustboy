@@ -1,8 +1,8 @@
 use std::borrow::Borrow;
-use crate::features::dma::DMARef;
-use crate::features::lcd::LCDRef;
-use crate::features::oam::OAMRef;
-use crate::features::timer::TimerRef;
+use crate::controllers::dma::DMAControllerRef;
+use crate::controllers::lcd::LCDControllerRef;
+use crate::memory::oam::OAMRef;
+use crate::controllers::timer::TimerControllerRef;
 use crate::memory::bank_memory::BankMemory;
 use crate::memory::linear_memory::LinearMemory;
 use crate::memory::memory::Memory;
@@ -15,9 +15,9 @@ pub struct MemoryBus<T> where T: Memory {
   vram: VRAM, // Two banks of 8k VRAM memory, switched by VBK register (0xFF4F)
   wram: WRAM,
   oam: OAMRef,
-  lcd: LCDRef,
-  timer: TimerRef,
-  dma: DMARef,
+  lcd: LCDControllerRef,
+  timer: TimerControllerRef,
+  dma: DMAControllerRef,
   stack: Stack,
   reserved_area_1: LinearMemory<0x1E00, 0xE000>, // In theory, this area is prohibited, but let's map it anyway
   reserved_area_2: LinearMemory<0x60, 0xFEA0>, // In theory, this area is prohibited, but let's map it anyway
@@ -67,7 +67,7 @@ impl<T> Memory for MemoryBus<T> where T: Memory {
 }
 
 impl<T> MemoryBus<T> where T: Memory {
-  pub fn new(rom: T, oam: OAMRef, dma: DMARef, lcd: LCDRef, timer: TimerRef) -> MemoryBus<T> {
+  pub fn new(rom: T, oam: OAMRef, dma: DMAControllerRef, lcd: LCDControllerRef, timer: TimerControllerRef) -> MemoryBus<T> {
     return MemoryBus {
       rom,
       vram: VRAM::new(),

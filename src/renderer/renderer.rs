@@ -1,6 +1,14 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 pub struct Point {
   pub x: u8,
   pub y: u8
+}
+
+pub enum TileMapIndex {
+  TileMap1,
+  TileMap2
 }
 
 pub enum TileAddressingMode {
@@ -28,6 +36,8 @@ impl Color {
   }
 }
 
+pub type RendererRef = Rc<RefCell<Box<dyn Renderer>>>;
+
 pub trait Renderer {
-  fn draw_pixel(x: u8, y: u8, color: Color);
+  fn draw_pixel(&self, x: u8, y: u8, color: Color);
 }

@@ -10,3 +10,5 @@ pub mod mbc5;
 pub mod vram;
 pub mod wram;
 pub mod stack;
+pub mod cram;
+pub mod oam;

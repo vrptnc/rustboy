@@ -5,9 +5,9 @@ use crate::cpu::interrupts::{Interrupt, InterruptControllerRef};
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
 
-pub type TimerRef = Rc<RefCell<Timer>>;
+pub type TimerControllerRef = Rc<RefCell<TimerController>>;
 
-pub struct Timer {
+pub struct TimerController {
   interrupt_controller: InterruptControllerRef,
   clock_pulse_bit: u8,
   divider: u16,
@@ -17,9 +17,9 @@ pub struct Timer {
   enabled: bool,
 }
 
-impl Timer {
-  pub fn new(interrupt_controller: InterruptControllerRef) -> Timer {
-    Timer {
+impl TimerController {
+  pub fn new(interrupt_controller: InterruptControllerRef) -> TimerController {
+    TimerController {
       interrupt_controller,
       clock_pulse_bit: 0,
       divider: 0,
@@ -31,7 +31,7 @@ impl Timer {
   }
 }
 
-impl ClockAware for Timer {
+impl ClockAware for TimerController {
   fn handle_tick(&mut self, _double_speed: bool) {
     let old_div = self.divider;
     self.divider = self.divider.wrapping_add(4);
@@ -47,7 +47,7 @@ impl ClockAware for Timer {
   }
 }
 
-impl Memory for Timer {
+impl Memory for TimerController {
   fn read(&self, address: u16) -> u8 {
     match address {
       0xFF04 => self.divider.get_upper_byte(),
