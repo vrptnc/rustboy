@@ -5,13 +5,13 @@ use crate::memory::oam::OAMRef;
 use crate::controllers::timer::TimerControllerRef;
 use crate::memory::bank_memory::BankMemory;
 use crate::memory::linear_memory::LinearMemory;
-use crate::memory::memory::Memory;
+use crate::memory::memory::{CGBMode, Memory};
 use crate::memory::stack::Stack;
 use crate::memory::vram::VRAM;
 use crate::memory::wram::WRAM;
 
-pub struct MemoryBus<T> where T: Memory {
-  rom: T,
+pub struct MemoryBus {
+  rom: Box<dyn Memory>,
   vram: VRAM, // Two banks of 8k VRAM memory, switched by VBK register (0xFF4F)
   wram: WRAM,
   oam: OAMRef,
@@ -24,7 +24,7 @@ pub struct MemoryBus<T> where T: Memory {
   interrupt_enable: u8
 }
 
-impl<T> Memory for MemoryBus<T> where T: Memory {
+impl Memory for MemoryBus {
   fn read(&self, address: u16) -> u8 {
     match address {
       0x0000..=0x7FFF => self.rom.read(address),
@@ -66,8 +66,8 @@ impl<T> Memory for MemoryBus<T> where T: Memory {
   }
 }
 
-impl<T> MemoryBus<T> where T: Memory {
-  pub fn new(rom: T, oam: OAMRef, dma: DMAControllerRef, lcd: LCDControllerRef, timer: TimerControllerRef) -> MemoryBus<T> {
+impl MemoryBus {
+  pub fn new(rom: Box<dyn Memory>, oam: OAMRef, dma: DMAControllerRef, lcd: LCDControllerRef, timer: TimerControllerRef) -> MemoryBus {
     return MemoryBus {
       rom,
       vram: VRAM::new(),

@@ -29,10 +29,8 @@ impl TimerController {
       enabled: false
     }
   }
-}
 
-impl ClockAware for TimerController {
-  fn handle_tick(&mut self, _double_speed: bool) {
+  pub fn tick(&mut self) {
     let old_div = self.divider;
     self.divider = self.divider.wrapping_add(4);
     if self.enabled {

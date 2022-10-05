@@ -84,11 +84,18 @@ impl MBC3 {
   fn latch_counter_data(&mut self) {
     self.rtc_registers = self.rtc;
   }
-}
 
-impl ClockAware for MBC3 {
+  pub fn tick(&mut self) {
+    self.handle_tick(false);
+  }
+
+  pub fn double_tick(&mut self) {
+    self.handle_tick(true);
+  }
+
   fn handle_tick(&mut self, double_speed: bool) {
-    self.rtc = self.rtc.tick(Duration::from_nanoseconds(1000));
+    let passed_nanoseconds = if double_speed { 500 } else { 1000 };
+    self.rtc = self.rtc.tick(Duration::from_nanoseconds(passed_nanoseconds));
   }
 }
 

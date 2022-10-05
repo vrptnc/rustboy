@@ -12,7 +12,7 @@ use crate::util::iterator::SizedIterator;
 pub struct TileAttributes(u8);
 
 impl TileAttributes {
-  pub fn has_priority_over_oam(&self) -> bool {
+  pub fn bg_and_window_priority_over_oam(&self) -> bool {
     self.0.get_bit(7)
   }
 

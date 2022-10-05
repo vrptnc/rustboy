@@ -1,12 +1,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use crate::MemoryBus;
 
 pub trait Memory {
   fn read(&self, address: u16) -> u8;
   fn write(&mut self, address: u16, value: u8);
 }
 
-pub type MemoryRef = Rc<RefCell<Box<dyn Memory>>>;
+pub type MemoryRef = Rc<RefCell<MemoryBus>>;
 
 pub enum ROMSize {
   KB32,
@@ -52,6 +53,25 @@ impl RAMSize {
       RAMSize::KB32 => 0x8000,
       RAMSize::KB64 => 0x10000,
       RAMSize::KB128 => 0x20000,
+    }
+  }
+}
+
+#[derive(Copy, Clone)]
+pub enum CGBMode {
+  Monochrome,
+  Color,
+  PGB,
+}
+
+impl CGBMode {
+  pub fn from_byte(byte: u8) -> CGBMode {
+    match byte & 0xBF {
+      0x00 => CGBMode::Monochrome,
+      0x80 => CGBMode::Color,
+      0x82 => CGBMode::PGB,
+      0x84 => CGBMode::PGB,
+      _ => panic!("Invalid CGB byte:  {:#x}", byte)
     }
   }
 }

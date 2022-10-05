@@ -6,6 +6,32 @@ use crate::util::bit_util::BitUtil;
 const START_ADDRESS: usize = 0xFE00;
 
 #[derive(Copy, Clone)]
+pub struct ObjectAttributes(u8);
+
+impl ObjectAttributes {
+  pub fn has_priority_over_oam(&self) -> bool {
+    self.0.get_bit(7)
+  }
+
+  pub fn flip_vertical(&self) -> bool {
+    self.0.get_bit(6)
+  }
+
+  pub fn flip_horizontal(&self) -> bool {
+    self.0.get_bit(5)
+  }
+
+  pub fn tile_bank_index(&self) -> u8 {
+    self.0.get_bit(3) as u8
+  }
+
+  pub fn palette_index(&self) -> u8 {
+    self.0 & 0x7
+  }
+
+}
+
+#[derive(Copy, Clone)]
 pub struct OAMObject {
   lcd_y: u8,
   lcd_x: u8,

@@ -1,12 +1,11 @@
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::thread::current;
 use web_sys::window;
 use crate::cpu::interrupts::{Interrupt, InterruptControllerRef};
 use crate::memory::cram::CRAMRef;
-use crate::memory::oam::OAMRef;
-use crate::memory::memory::MemoryRef;
+use crate::memory::oam::{OAMObject, OAMRef};
+use crate::memory::memory::{CGBMode, Memory, MemoryRef};
 use crate::memory::vram::{Tile, TileMapView, VRAMRef};
 use crate::renderer::renderer::{Point, RendererRef, TileAddressingMode, TileMapIndex};
 use crate::time::time::ClockAware;
@@ -64,10 +63,10 @@ impl LCDC {
 }
 
 pub struct LCDController {
+  current_object_index: u8,
   intersecting_object_indices: Vec<u8>,
   interrupt_controller: InterruptControllerRef,
   renderer: Option<RendererRef>,
-  memory: Option<MemoryRef>,
   cram: Option<CRAMRef>,
   vram: Option<VRAMRef>,
   oam: Option<OAMRef>,
@@ -83,15 +82,16 @@ pub struct LCDController {
   obp1: u8,
   wy: u8,
   wx: u8,
+  cgb_mode: CGBMode
 }
 
 impl LCDController {
-  pub fn new(interrupt_controller: InterruptControllerRef) -> LCDController {
+  pub fn new(cgb_mode: CGBMode, interrupt_controller: InterruptControllerRef) -> LCDController {
     LCDController {
+      current_object_index: 0,
       intersecting_object_indices: vec![],
       interrupt_controller,
       renderer: None,
-      memory: None,
       cram: None,
       vram: None,
       oam: None,
@@ -107,11 +107,8 @@ impl LCDController {
       obp1: 0,
       wy: 0,
       wx: 0,
+      cgb_mode
     }
-  }
-
-  pub fn set_memory(&mut self, memory: MemoryRef) {
-    self.memory = Some(memory);
   }
 
   pub fn set_renderer(&mut self, renderer: RendererRef) {
@@ -151,15 +148,15 @@ impl LCDController {
   }
 
   fn find_intersecting_objects(&mut self) {
-    let object_index = ((self.dot % 456) / 2) as u8;
     let current_line = self.current_line();
     let use_8_x_16_tiles = self.lcdc.use_8_x_16_tiles();
     let oam = self.oam.as_ref().unwrap().borrow();
-    if oam.object_intersects_with_line(object_index, current_line, use_8_x_16_tiles) && self.intersecting_object_indices.len() < 10 {
-      self.intersecting_object_indices.push(object_index);
-    }
-    if oam.object_intersects_with_line(object_index + 1, current_line, use_8_x_16_tiles) && self.intersecting_object_indices.len() < 10 {
-      self.intersecting_object_indices.push(object_index + 1);
+    let object_index_for_dot = ((self.dot % 456) / 2) as u8;
+    while self.current_object_index <= object_index_for_dot && self.intersecting_object_indices.len() < 10 {
+      if oam.object_intersects_with_line(self.current_object_index, current_line, use_8_x_16_tiles) {
+        self.intersecting_object_indices.push(self.current_object_index);
+      }
+      self.current_object_index += 1;
     }
   }
 
@@ -190,7 +187,7 @@ impl LCDController {
       .take(160)
       .enumerate()
       .for_each(|(x, color)| {
-        renderer.draw_pixel(x as u8, current_line, color);
+        renderer.draw_pixel(x as u8, current_line, color, false);
       });
   }
 
@@ -225,9 +222,25 @@ impl LCDController {
         .take(pixels_to_draw as usize)
         .enumerate()
         .for_each(|(x, color)| {
-          renderer.draw_pixel(window_pixel_column + x as u8, current_line, color);
+          renderer.draw_pixel(window_pixel_column + x as u8, current_line, color, false);
         });
     }
+  }
+
+  fn draw_obj_line(&self) {
+    let oam = self.oam.as_ref().unwrap().borrow();
+    let vram = self.vram.as_ref().unwrap().borrow();
+    let tile_data_view = vram.tile_data(TileAddressingMode::Mode8000);
+
+    let objects: Vec<OAMObject> = self.intersecting_object_indices.iter()
+      .map(|obj_index| oam.get_object(*obj_index))
+      .collect();
+    // objects.sort_by(|a, b| {
+    //
+    // })
+
+
+    //   .flat_map(|obj| tile_data_view.get_tile_data())
   }
 
   fn draw_line(&self) {
@@ -235,11 +248,19 @@ impl LCDController {
     self.draw_background_line();
     // 2) Draw window line
     self.draw_window_line();
+    // 3) Draw OBJ
+    self.draw_obj_line();
   }
-}
 
-impl ClockAware for LCDController {
-  fn handle_tick(&mut self, double_speed: bool) {
+  pub fn tick(&mut self) {
+    self.handle_tick(false);
+  }
+
+  pub fn double_tick(&mut self) {
+    self.handle_tick(true);
+  }
+
+  pub fn handle_tick(&mut self, double_speed: bool) {
     /*
      * The LCD works with a dot clock, that ticks at the clock frequency.
      * The LCD works with 154 scanlines of 456 dots each = 70224 dots per frame
@@ -247,7 +268,8 @@ impl ClockAware for LCDController {
      * The 456 dots per scanline consist of 80 dots spent in mode 2 (searching the OAM for viable objects that intersect the current scanline),
      * 168-291 dots spent in mode 3 (rendering the image), and the remaining dots spent in HBlank
      */
-    self.dot = (self.dot + 4) % DOTS_PER_FRAME;
+    let number_of_dots_for_tick = if double_speed { 2u32 } else { 4u32 };
+    self.dot = (self.dot + number_of_dots_for_tick) % DOTS_PER_FRAME;
     match self.get_mode() {
       LCDMode::HBlank => {
         if self.current_column() == 248 {
@@ -262,7 +284,10 @@ impl ClockAware for LCDController {
       LCDMode::Mode2 => {
         self.find_intersecting_objects()
       }
-      LCDMode::Mode3 => {}
+      LCDMode::Mode3 => {
+        todo!("Either only call this once for the current line or progressively draw the line");
+        self.draw_line()
+      }
     }
   }
 }

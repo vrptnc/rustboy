@@ -39,5 +39,5 @@ impl Color {
 pub type RendererRef = Rc<RefCell<Box<dyn Renderer>>>;
 
 pub trait Renderer {
-  fn draw_pixel(&self, x: u8, y: u8, color: Color);
+  fn draw_pixel(&self, x: u8, y: u8, color: Color, draw_in_back: bool);
 }
