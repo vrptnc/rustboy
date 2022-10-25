@@ -1,0 +1,40 @@
+@startuml
+hide empty field
+hide empty method
+
+class CPU
+class MemoryBus
+class LCDController
+class VRAM
+class WRAM
+class CRAM
+class OAM
+class InterruptController
+class DMAController
+class TimerController
+interface Renderer
+
+CPU o-- InterruptController
+
+LCDController o-- VRAM
+LCDController o-- CRAM
+LCDController o-- OAM
+LCDController o-- Renderer
+LCDController o-- InterruptController
+
+DMAController o-- LCDController
+DMAController o-- CPU
+
+TimerController o-- InterruptController
+
+MemoryBus o-- VRAM
+MemoryBus o-- CRAM
+MemoryBus o-- OAM
+MemoryBus o-- WRAM
+MemoryBus o-- LCDController
+MemoryBus o-- DMAController
+MemoryBus o-- TimerController
+
+
+
+@enduml

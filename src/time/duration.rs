@@ -10,6 +10,15 @@ pub struct RTCDuration {
 }
 
 impl RTCDuration {
+  pub fn new() -> RTCDuration {
+    RTCDuration {
+      seconds: 0,
+      minutes: 0,
+      hours: 0,
+      days: 0
+    }
+  }
+
   pub fn to_duration(&self) -> Duration {
     Duration::from_seconds(self.seconds as u128 +
                              (self.minutes as u128) * 60 +

@@ -1,13 +1,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::MemoryBus;
+use crate::MainMemory;
 
 pub trait Memory {
   fn read(&self, address: u16) -> u8;
   fn write(&mut self, address: u16, value: u8);
 }
-
-pub type MemoryRef = Rc<RefCell<MemoryBus>>;
 
 pub enum ROMSize {
   KB32,

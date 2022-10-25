@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use mockall::automock;
 
 pub struct Point {
   pub x: u8,
@@ -36,8 +37,7 @@ impl Color {
   }
 }
 
-pub type RendererRef = Rc<RefCell<Box<dyn Renderer>>>;
-
+#[automock]
 pub trait Renderer {
   fn draw_pixel(&self, x: u8, y: u8, color: Color, draw_in_back: bool);
 }

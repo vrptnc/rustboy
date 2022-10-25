@@ -3,6 +3,7 @@ use std::iter;
 use std::iter::{Map, Rev, Skip};
 use std::ops::Range;
 use std::rc::Rc;
+use mockall::automock;
 use crate::memory::memory::Memory;
 use crate::renderer::renderer::{ColorIndex, Point, TileAddressingMode, TileMapIndex};
 use crate::util::bit_util::{BitUtil, ByteUtil, UnsignedCrumbIterator};
@@ -105,27 +106,33 @@ impl<'a> TileMapView<'a> {
   }
 }
 
-pub type VRAMRef = Rc<RefCell<VRAM>>;
-
-pub struct VRAM {
-  bank_index: u8,
-  bytes: [[u8; VRAM::BANK_SIZE]; 2],
+#[automock]
+pub trait VRAM {
+  fn tile_map<'a>(&'a self, tile_map_index: TileMapIndex) -> TileMapView<'a>;
+  fn tile_data<'a>(&'a self, addressing_mode: TileAddressingMode) -> TileDataView<'a>;
 }
 
-impl VRAM {
+pub struct VRAMImpl {
+  bank_index: u8,
+  bytes: [[u8; VRAMImpl::BANK_SIZE]; 2],
+}
+
+impl VRAMImpl {
   const START_ADDRESS: u16 = 0x8000;
   const END_ADDRESS: u16 = 0x9FFF;
   const BANK_INDEX_ADDRESS: u16 = 0xFF4F;
   const BANK_SIZE: usize = 0x2000;
 
-  pub fn new() -> VRAM {
-    VRAM {
+  pub fn new() -> VRAMImpl {
+    VRAMImpl {
       bank_index: 0,
-      bytes: [[0; VRAM::BANK_SIZE]; 2],
+      bytes: [[0; VRAMImpl::BANK_SIZE]; 2],
     }
   }
+}
 
-  pub fn tile_map(&self, tile_map_index: TileMapIndex) -> TileMapView {
+impl VRAM for VRAMImpl {
+  fn tile_map(&self, tile_map_index: TileMapIndex) -> TileMapView {
     match tile_map_index {
       TileMapIndex::TileMap1 => TileMapView {
         bytes: [&self.bytes[0][0x1800..0x1C00], &self.bytes[1][0x1800..0x1C00]]
@@ -136,7 +143,7 @@ impl VRAM {
     }
   }
 
-  pub fn tile_data(&self, addressing_mode: TileAddressingMode) -> TileDataView {
+  fn tile_data(&self, addressing_mode: TileAddressingMode) -> TileDataView {
     match addressing_mode {
       TileAddressingMode::Mode8000 => TileDataView {
         block_1: [&self.bytes[0][0..0x800], &self.bytes[1][0..0x800]],
@@ -150,53 +157,48 @@ impl VRAM {
   }
 }
 
-impl Memory for VRAM {
+impl Memory for VRAMImpl {
   fn read(&self, address: u16) -> u8 {
     match address {
-      VRAM::START_ADDRESS..=VRAM::END_ADDRESS => {
-        self.bytes[self.bank_index as usize][(address - VRAM::START_ADDRESS) as usize]
+      VRAMImpl::START_ADDRESS..=VRAMImpl::END_ADDRESS => {
+        self.bytes[self.bank_index as usize][(address - VRAMImpl::START_ADDRESS) as usize]
       }
-      VRAM::BANK_INDEX_ADDRESS => self.bank_index,
+      VRAMImpl::BANK_INDEX_ADDRESS => self.bank_index,
       _ => panic!("Can't read address {} from VRAM", address)
     }
   }
 
   fn write(&mut self, address: u16, value: u8) {
     match address {
-      VRAM::START_ADDRESS..=VRAM::END_ADDRESS => {
-        self.bytes[self.bank_index as usize][(address - VRAM::START_ADDRESS) as usize] = value
+      VRAMImpl::START_ADDRESS..=VRAMImpl::END_ADDRESS => {
+        self.bytes[self.bank_index as usize][(address - VRAMImpl::START_ADDRESS) as usize] = value
       }
-      VRAM::BANK_INDEX_ADDRESS => self.bank_index = value & 0x01,
+      VRAMImpl::BANK_INDEX_ADDRESS => self.bank_index = value & 0x01,
       _ => panic!("Can't write to address {} in VRAM", address)
     }
   }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
   use assert_hex::assert_eq_hex;
   use super::*;
 
-  fn write_test_data_to_vram(vram: &mut VRAM) {
-    //Set tile bank to 0
-    // vram.write()
-  }
-
   #[test]
   fn set_vram_bank() {
-    let mut vram = VRAM::new();
-    vram.write(VRAM::BANK_INDEX_ADDRESS, 0);
-    vram.write(VRAM::START_ADDRESS, 0xAB);
-    vram.write(VRAM::BANK_INDEX_ADDRESS, 1);
-    vram.write(VRAM::START_ADDRESS, 0xCD);
-    assert_eq_hex!(vram.read(VRAM::START_ADDRESS), 0xCD);
-    vram.write(VRAM::BANK_INDEX_ADDRESS, 0);
-    assert_eq_hex!(vram.read(VRAM::START_ADDRESS), 0xAB);
+    let mut vram = VRAMImpl::new();
+    vram.write(VRAMImpl::BANK_INDEX_ADDRESS, 0);
+    vram.write(VRAMImpl::START_ADDRESS, 0xAB);
+    vram.write(VRAMImpl::BANK_INDEX_ADDRESS, 1);
+    vram.write(VRAMImpl::START_ADDRESS, 0xCD);
+    assert_eq_hex!(vram.read(VRAMImpl::START_ADDRESS), 0xCD);
+    vram.write(VRAMImpl::BANK_INDEX_ADDRESS, 0);
+    assert_eq_hex!(vram.read(VRAMImpl::START_ADDRESS), 0xAB);
   }
-
-  #[test]
-  fn get_tile_data_view() {
-    let mut vram = VRAM::new();
-  }
+  //
+  // #[test]
+  // fn get_tile_data_view() {
+  //   let mut vram = VRAMImpl::new();
+  // }
 }
 

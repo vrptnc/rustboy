@@ -1,13 +1,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::{CPURef, MemoryBus};
-use crate::controllers::lcd::{LCDMode, LCDControllerRef};
-use crate::memory::memory::{Memory, MemoryRef};
+use crate::{CPU, MainMemory};
+use crate::controllers::lcd::{LCDMode, LCDController};
+use crate::infrastructure::toggle::Toggle;
+use crate::memory::memory::Memory;
 use crate::time::time::ClockAware;
 use crate::util::bit_util::BitUtil;
 
 #[derive(PartialEq)]
 enum DMATransferType {
+  Inactive,
   Legacy,
   GeneralPurpose,
   HBlank,
@@ -19,10 +21,19 @@ struct DMATransfer {
   destination_address: u16,
   bytes_transferred: u8,
   bytes_to_transfer: u8,
-  in_progress: bool,
 }
 
 impl DMATransfer {
+  pub fn inactive() -> DMATransfer {
+    DMATransfer {
+      transfer_type: DMATransferType::Inactive,
+      source_address: 0,
+      destination_address: 0,
+      bytes_transferred: 0,
+      bytes_to_transfer: 0,
+    }
+  }
+
   pub fn new(source_address: u16, destination_address: u16, bytes_to_transfer: u8, transfer_type: DMATransferType) -> DMATransfer {
     DMATransfer {
       transfer_type,
@@ -30,7 +41,6 @@ impl DMATransfer {
       destination_address,
       bytes_to_transfer,
       bytes_transferred: 0,
-      in_progress: false
     }
   }
 
@@ -41,136 +51,125 @@ impl DMATransfer {
       destination_address: 0,
       bytes_transferred: 0,
       bytes_to_transfer: 0,
-      in_progress: true
     }
   }
 }
 
-pub type DMAControllerRef = Rc<RefCell<DMAController>>;
+pub trait DMAController {
+  fn tick(&mut self, memory: &mut dyn Memory, cpu: &mut dyn CPU, lcd: &dyn LCDController, double_speed: bool);
+}
 
-pub struct DMAController {
-  lcd: Option<LCDControllerRef>,
-  cpu: Option<CPURef>,
+pub struct DMAControllerImpl {
   dma: u8,
   high_source_address: u8,
   low_source_address: u8,
   high_destination_address: u8,
   low_destination_address: u8,
   hdma5: u8,
-  active_transfer: Option<DMATransfer>,
-  double_speed_toggle: bool,
+  active_transfer: DMATransfer,
+  cancel_requested: Toggle,
+  double_speed_toggle: Toggle,
 }
 
-impl DMAController {
-  pub fn new() -> DMAController {
-    DMAController {
-      lcd: None,
-      cpu: None,
+impl DMAControllerImpl {
+  pub fn new() -> DMAControllerImpl {
+    DMAControllerImpl {
       dma: 0,
       high_source_address: 0,
       low_source_address: 0,
       high_destination_address: 0,
       low_destination_address: 0,
       hdma5: 0xFF,
-      active_transfer: None,
-      double_speed_toggle: true,
+      active_transfer: DMATransfer::inactive(),
+      cancel_requested: Toggle(false),
+      double_speed_toggle: Toggle(false),
     }
-  }
-
-  pub fn set_lcd(&mut self, lcd: LCDControllerRef) {
-    self.lcd = Some(lcd);
-  }
-
-  pub fn set_cpu(&mut self, cpu: CPURef) {
-    self.cpu = Some(cpu);
-  }
-
-  fn tick(&mut self, memory: &mut dyn Memory) {
-    self.handle_tick(memory, false);
-  }
-
-  fn double_tick(&mut self, memory: &mut dyn Memory) {
-    self.handle_tick(memory, true);
   }
 
   fn handle_legacy_transfer(&mut self, memory: &mut dyn Memory) {
-    let DMATransfer { source_address, bytes_transferred, .. } = self.active_transfer.as_mut().unwrap();
-    let current_byte = memory.read(*source_address + (*bytes_transferred as u16));
-    memory.write(0xFE00 + (*bytes_transferred as u16), current_byte);
-    *bytes_transferred += 1;
-    if *bytes_transferred == 160 {
-      self.active_transfer = None
+    let mut bytes_transferred = self.active_transfer.bytes_transferred as u16;
+    let current_byte = memory.read(self.active_transfer.source_address + bytes_transferred);
+    memory.write(0xFE00 + bytes_transferred, current_byte);
+    bytes_transferred += 1;
+    self.active_transfer.bytes_transferred = bytes_transferred as u8;
+    if bytes_transferred == 160 {
+      self.active_transfer.transfer_type = DMATransferType::Inactive
     }
   }
 
-  fn handle_general_purpose_transfer(&mut self, memory: &mut dyn Memory, double_speed: bool) {
-    let DMATransfer { source_address, destination_address, bytes_transferred, bytes_to_transfer, in_progress, .. } = self.active_transfer.as_mut().unwrap();
-    if double_speed {
-      self.double_speed_toggle = !self.double_speed_toggle;
-      if self.double_speed_toggle {
+  fn handle_general_purpose_transfer(&mut self, memory: &mut dyn Memory, cpu: &mut dyn CPU, double_speed: bool) {
+    if double_speed && self.double_speed_toggle.inspect_and_toggle() {
+      return;
+    }
+    cpu.disable();
+    let mut bytes_transferred = self.active_transfer.bytes_transferred as u16;
+    let DMATransfer { source_address, destination_address, bytes_to_transfer, .. } = self.active_transfer;
+    let current_byte = memory.read(source_address + bytes_transferred);
+    memory.write(destination_address + (bytes_transferred as u16), current_byte);
+    bytes_transferred += 1;
+    self.active_transfer.bytes_transferred = bytes_transferred as u8;
+    if bytes_transferred == (bytes_to_transfer as u16) {
+      self.active_transfer.transfer_type = DMATransferType::Inactive;
+      self.hdma5 = 0xFF;
+      cpu.enable()
+    }
+  }
+
+  fn should_cancel_hblank_transfer(&self, cpu: &dyn CPU) -> bool {
+    cpu.enabled() && self.cancel_requested.checked()
+  }
+
+  fn cancel_hblank_transfer(&mut self) {
+    self.cancel_requested.clear();
+    self.active_transfer.transfer_type = DMATransferType::Inactive;
+    self.hdma5 = self.hdma5.set_bit(7);
+  }
+
+  fn handle_hblank_transfer(&mut self, memory: &mut dyn Memory, cpu: &mut dyn CPU, lcd: &dyn LCDController, double_speed: bool) {
+    if double_speed && self.double_speed_toggle.inspect_and_toggle() {
+      return;
+    }
+    let mut bytes_transferred = self.active_transfer.bytes_transferred;
+    let DMATransfer { source_address, destination_address, bytes_to_transfer, .. } = self.active_transfer;
+    if let LCDMode::HBlank = lcd.get_mode() {
+      if self.should_cancel_hblank_transfer(cpu) {
+        self.cancel_hblank_transfer();
         return;
       }
-    }
-    let cpu = self.cpu.as_ref().unwrap();
-    if !*in_progress {
-      *in_progress = true;
-      cpu.borrow_mut().disable();
-    }
-    let current_byte = memory.read(*source_address + (*bytes_transferred as u16));
-    memory.write(*destination_address + (*bytes_transferred as u16), current_byte);
-    *bytes_transferred += 1;
-    if *bytes_transferred == *bytes_to_transfer {
-      self.active_transfer = None;
-      self.hdma5 = 0xFF;
-      cpu.borrow_mut().enable();
-    }
-  }
-
-  fn handle_hblank_transfer(&mut self, memory: &mut dyn Memory, double_speed: bool) {
-    let DMATransfer { source_address, destination_address, bytes_transferred, bytes_to_transfer, in_progress, .. } = self.active_transfer.as_mut().unwrap();
-    let cpu = self.cpu.as_ref().unwrap();
-    if let LCDMode::HBlank = self.lcd.as_ref().unwrap().borrow().get_mode() {
-      if double_speed {
-        self.double_speed_toggle = !self.double_speed_toggle;
-        if self.double_speed_toggle {
-          return;
-        }
-      }
-      if !*in_progress {
-        *in_progress = true;
-        cpu.borrow_mut().disable();
-      }
-      let current_byte = memory.read(*source_address + (*bytes_transferred as u16));
-      memory.write(*destination_address + (*bytes_transferred as u16), current_byte);
-      *bytes_transferred += 1;
-      if *bytes_transferred == *bytes_to_transfer {
-        cpu.borrow_mut().enable();
-        self.active_transfer = None;
+      cpu.disable();
+      let current_byte = memory.read(source_address + bytes_transferred as u16);
+      memory.write(destination_address + bytes_transferred as u16, current_byte);
+      bytes_transferred += 1;
+      self.active_transfer.bytes_transferred = bytes_transferred;
+      if bytes_transferred == bytes_to_transfer {
+        cpu.enable();
+        self.active_transfer.transfer_type = DMATransferType::Inactive;
+        self.cancel_requested.clear();
         self.hdma5 = 0xFF;
       } else {
-        let lines_to_transfer = (*bytes_to_transfer / 16);
-        let lines_transferred = (*bytes_transferred / 16);
+        let lines_to_transfer = (bytes_to_transfer / 16);
+        let lines_transferred = (bytes_transferred / 16);
         let lines_remaining = lines_to_transfer - lines_transferred;
         self.hdma5 = lines_remaining - 1;
       }
-    } else if *in_progress {
-      *in_progress = false;
-      cpu.borrow_mut().enable();
-    }
-  }
-
-  fn handle_tick(&mut self, memory: &mut dyn Memory, double_speed: bool) {
-    if let Some(ref mut active_transfer) = self.active_transfer {
-      match active_transfer.transfer_type {
-        DMATransferType::Legacy => self.handle_legacy_transfer(memory),
-        DMATransferType::GeneralPurpose => self.handle_general_purpose_transfer(memory, double_speed),
-        DMATransferType::HBlank => self.handle_hblank_transfer(memory, double_speed)
-      }
+    } else {
+      cpu.enable();
     }
   }
 }
 
-impl Memory for DMAController {
+impl DMAController for DMAControllerImpl {
+  fn tick(&mut self, memory: &mut dyn Memory, cpu: &mut dyn CPU, lcd: &dyn LCDController, double_speed: bool) {
+    match self.active_transfer.transfer_type {
+      DMATransferType::Inactive => cpu.enable(),
+      DMATransferType::Legacy => self.handle_legacy_transfer(memory),
+      DMATransferType::GeneralPurpose => self.handle_general_purpose_transfer(memory, cpu, double_speed),
+      DMATransferType::HBlank => self.handle_hblank_transfer(memory, cpu, lcd, double_speed),
+    }
+  }
+}
+
+impl Memory for DMAControllerImpl {
   fn read(&self, address: u16) -> u8 {
     match address {
       0xFF46 => self.dma,
@@ -183,33 +182,27 @@ impl Memory for DMAController {
     match address {
       0xFF46 => {
         self.dma = value;
-        self.active_transfer = Some(DMATransfer::legacy((value as u16) * 0x100));
+        self.active_transfer = DMATransfer::legacy((value as u16) * 0x100);
       }
       0xFF51 => self.high_source_address = value,
       0xFF52 => self.low_source_address = value & 0xF0,
       0xFF53 => self.high_destination_address = (value & 0x1F) | (0x80),
       0xFF54 => self.low_destination_address = value & 0xF0,
       0xFF55 => {
-        match self.active_transfer {
-          None => {
-            self.active_transfer = Some(DMATransfer::new(
+        match self.active_transfer.transfer_type {
+          DMATransferType::Inactive => {
+            self.active_transfer = DMATransfer::new(
               ((self.high_source_address as u16) << 8) | (self.low_source_address as u16),
               ((self.high_destination_address as u16) << 8) | (self.low_destination_address as u16),
               ((value & 0x7F) + 1) * 16,
-              if value.get_bit(7) { DMATransferType::HBlank } else { DMATransferType::GeneralPurpose }
-            ));
+              if value.get_bit(7) { DMATransferType::HBlank } else { DMATransferType::GeneralPurpose },
+            );
             self.hdma5 = 0x00;
           }
-          Some(ref mut active_transfer) => {
-            //If an active HBlank transfer is ongoing, and bit 7 is set to 0, cancel the transfer
-            if let DMATransferType::HBlank = active_transfer.transfer_type {
-              if !value.get_bit(7) {
-                self.cpu.as_ref().unwrap().borrow_mut().enable();
-                self.active_transfer = None;
-                self.hdma5 = self.hdma5.set_bit(7);
-              }
-            }
+          DMATransferType::HBlank if !value.get_bit(7) => {
+            self.cancel_requested.check();
           }
+          _ => {}
         }
       }
       _ => panic!("DMA can't write to address {}", address)
@@ -222,11 +215,15 @@ mod tests {
   use std::cell::RefCell;
   use std::rc::Rc;
   use assert_hex::assert_eq_hex;
-  use crate::controllers::lcd::LCDController;
-  use crate::CPU;
-  use crate::cpu::interrupts::InterruptController;
+  use crate::controllers::lcd::LCDControllerImpl;
+  use crate::controllers::lcd::MockLCDController;
+  use crate::{CPUImpl, MockCPU};
+  use crate::cpu::interrupts::InterruptControllerImpl;
+  use crate::memory::cram::CRAMImpl;
   use crate::memory::memory::CGBMode;
   use crate::memory::memory::test::MockMemory;
+  use crate::memory::oam::OAMImpl;
+  use crate::memory::vram::VRAMImpl;
   use super::*;
 
   fn create_memory() -> MockMemory {
@@ -237,91 +234,146 @@ mod tests {
     memory
   }
 
-  fn create_dma() -> DMAController {
-    let mut dma = DMAController::new();
-    let interrupt_controller = Rc::new(RefCell::new(InterruptController::new()));
-    let cpu = Rc::new(RefCell::new(CPU::new(Rc::clone(&interrupt_controller))));
-    let lcd = Rc::new(RefCell::new(LCDController::new(CGBMode::Color, Rc::clone(&interrupt_controller))));
-    dma.set_cpu(cpu);
-    dma.set_lcd(lcd);
-    dma
-  }
-
   #[test]
   fn start_legacy_dma_transfer() {
-    let mut dma = create_dma();
+    let mut dma = DMAControllerImpl::new();
     let mut memory = create_memory();
+    let mut cpu = MockCPU::new();
+    let mut lcd = MockLCDController::new();
+    cpu.expect_enable().never();
+    cpu.expect_disable().never();
     dma.write(0xFF46, 0xC0);
     for (index, address) in (0xFE00u16..=0xFE9Fu16).enumerate() {
       assert_eq_hex!(memory.read(address), 0x0000);
-      dma.tick(&mut memory);
+      dma.tick(&mut memory, &mut cpu, &mut lcd, false);
       assert_eq_hex!(memory.read(address), index as u8);
     }
-    dma.tick(&mut memory);
-    assert_eq_hex!(memory.read(0xFEA0), 0x0000);
+    cpu.expect_enable().once().return_const(()); // Once DMA returns to inactive, the CPU should be (re)enabled on the next tick
+    dma.tick(&mut memory, &mut cpu, &mut lcd, false);
+    assert_eq_hex!(memory.read(0x8190), 0x0000);
   }
 
   #[test]
   fn start_general_purpose_dma_transfer() {
-    let mut dma = create_dma();
+    let mut dma = DMAControllerImpl::new();
     let mut memory = create_memory();
+    let mut cpu = MockCPU::new();
+    let mut lcd = MockLCDController::new();
     dma.write(0xFF51, 0xC0);
     dma.write(0xFF52, 0x05); // 5 should be masked away
     dma.write(0xFF53, 0x01); // Should be masked with 0x1F so that result is 0x81
     dma.write(0xFF54, 0x23); // 3 should be masked away -> result is 0x20
-    assert_eq!(dma.cpu.as_ref().unwrap().borrow().enabled(), true);
     dma.write(0xFF55, 0x06); // Transfer 7 lines = 7 x 16 byte = 112 byte
+    cpu.expect_disable().times(0x70).return_const(());
+    cpu.expect_enable().once().return_const(());
     for (index, address) in (0x8120u16..=0x818Fu16).enumerate() {
       assert_eq_hex!(memory.read(address), 0x0000);
-      dma.tick(&mut memory);
-      assert_eq!(dma.cpu.as_ref().unwrap().borrow().enabled(), index == 111);
+      dma.tick(&mut memory, &mut cpu, &mut lcd, false);
       assert_eq_hex!(memory.read(address), index as u8);
     }
-    assert_eq!(dma.cpu.as_ref().unwrap().borrow().enabled(), true);
     assert_eq_hex!(dma.read(0xFF55), 0xFF);
-    dma.tick(&mut memory);
-    assert_eq_hex!(memory.read(0xFEA0), 0x0000);
+    cpu.expect_enable().once().return_const(()); // Once DMA returns to inactive, the CPU should be (re)enabled on the next tick
+    dma.tick(&mut memory, &mut cpu, &mut lcd, false);
+    assert_eq_hex!(memory.read(0x8190), 0x0000);
   }
 
   #[test]
   fn start_hblank_dma_transfer() {
-    let mut dma = create_dma();
+    let mut dma = DMAControllerImpl::new();
     let mut memory = create_memory();
+    let mut cpu = MockCPU::new();
+    let mut lcd = MockLCDController::new();
     dma.write(0xFF51, 0xC0);
     dma.write(0xFF52, 0x05); // 5 should be masked away
     dma.write(0xFF53, 0x01); // Should be masked with 0x1F so that result is 0x81
     dma.write(0xFF54, 0x23); // 3 should be masked away -> result is 0x20
     dma.write(0xFF55, 0x86); // Transfer 7 lines = 7 x 16 byte = 112 byte
+
+    lcd.expect_get_mode()
+      .times(0x70)
+      .return_const(LCDMode::Mode2);
+    cpu.expect_enable()
+      .times(0x70)
+      .return_const(());
+    for address in 0x8120u16..=0x818Fu16 {
+      assert_eq_hex!(memory.read(address), 0x0000);
+      dma.tick(&mut memory, &mut cpu, &mut lcd, false);
+      assert_eq_hex!(memory.read(address), 0x0000);
+    }
+
+    lcd.expect_get_mode()
+      .times(0x70)
+      .return_const(LCDMode::HBlank);
+    cpu.expect_disable()
+      .times(0x70)
+      .return_const(());
+    cpu.expect_enabled()
+      .times(0x70)
+      .return_const(false); // Set the CPU to disabled for the duration of the HBlank DMA transfer
     for (index, address) in (0x8120u16..=0x818Fu16).enumerate() {
-      assert_eq_hex!(memory.read(address), 0x0000);
-      memory.write(0xFF41, 0x01); // Explicitly Set LCD to mode 1; Outside of hblank, no byte should be transferred
-      dma.tick(&mut memory);
-      assert_eq_hex!(memory.read(address), 0x0000);
-      memory.write(0xFF41, 0x00); // Explicitly Set LCD to hblank
-      dma.tick(&mut memory);
+      if index == 0x6F {
+        cpu.expect_enable()
+          .once()
+          .return_const(());
+      }
+      dma.tick(&mut memory, &mut cpu, &mut lcd, false);
       assert_eq_hex!(memory.read(address), index as u8);
     }
     assert_eq_hex!(dma.read(0xFF55), 0xFF);
-    dma.tick(&mut memory);
-    assert_eq_hex!(memory.read(0xFEA0), 0x0000);
+    cpu.expect_enable().once().return_const(()); // Once DMA returns to inactive, the CPU should be (re)enabled on the next tick
+    dma.tick(&mut memory, &mut cpu, &mut lcd, false);
+    assert_eq_hex!(memory.read(0x8190), 0x0000);
   }
 
   #[test]
   fn cancel_hblank_dma_transfer() {
-    let mut dma = create_dma();
+    let mut dma = DMAControllerImpl::new();
     let mut memory = create_memory();
+    let mut cpu = MockCPU::new();
+    let mut lcd = MockLCDController::new();
+
     dma.write(0xFF51, 0xC0);
     dma.write(0xFF52, 0x05); // 5 should be masked away
     dma.write(0xFF53, 0x01); // Should be masked with 0x1F so that result is 0x81
     dma.write(0xFF54, 0x23); // 3 should be masked away -> result is 0x20
     dma.write(0xFF55, 0x86); // Transfer 7 lines = 7 x 16 byte = 112 byte
-    for _ in (0..0x20).enumerate() { // Transfer only 2 lines
-      dma.tick(&mut memory);
+
+    lcd.expect_get_mode()
+      .times(0x20)
+      .return_const(LCDMode::HBlank);
+    cpu.expect_disable()
+      .times(0x20)
+      .return_const(());
+    cpu.expect_enabled()
+      .times(0x20)
+      .return_const(false); // Set the CPU to disabled for the duration of the HBlank DMA transfer
+    dma.tick(&mut memory, &mut cpu, &mut lcd, false); // Do a single tick to start the transfer during HBlank
+    dma.write(0xFF55, 0x00); // Cancel the HBlank DMA transfer straight away
+    for index in (0usize..0x1F) { // Do a number of ticks still during HBlank, during these ticks, data should still be transferred
+      dma.tick(&mut memory, &mut cpu, &mut lcd, false);
     }
-    // Cancel the HBlank DMA transfer
-    dma.write(0xFF55, 0x00);
+
+    lcd.expect_get_mode()
+      .once()
+      .return_const(LCDMode::Mode2); // Switch the mode to mode 2 to end HBlank for a minute
+    cpu.expect_enable()
+      .once()
+      .return_const(());
+    dma.tick(&mut memory, &mut cpu, &mut lcd, false);
+
+    lcd.expect_get_mode().once().return_const(LCDMode::HBlank); // Start a new HBlank period. DMA transfer should now be cancelled
+    cpu.expect_enabled()
+      .once()
+      .return_const(true);
+    dma.tick(&mut memory, &mut cpu, &mut lcd, false);
+
+    cpu.expect_enable()
+      .once()
+      .return_const(());
+    dma.tick(&mut memory, &mut cpu, &mut lcd, false); // Do an extra tick to verify that there are no more writes
+
     assert_eq_hex!(dma.read(0xFF55), 0x84);
-    dma.tick(&mut memory);
-    assert_eq_hex!(memory.read(0xFEA0), 0x0000);
+    assert_eq_hex!(memory.read(0x813F), 0x1F);
+    assert_eq_hex!(memory.read(0x8140), 0x00);
   }
 }

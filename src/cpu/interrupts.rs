@@ -3,12 +3,12 @@ use std::rc::Rc;
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
 
-pub type InterruptControllerRef = Rc<RefCell<InterruptController>>;
+pub type InterruptControllerRef = Rc<RefCell<InterruptControllerImpl>>;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Interrupt {
   VerticalBlank,
-  LCDC,
+  Stat,
   TimerOverflow,
   SerialIOComplete,
   ButtonPressed,
@@ -18,7 +18,7 @@ impl Interrupt {
   pub fn get_bit(&self) -> u8 {
     match self {
       Interrupt::VerticalBlank => 0,
-      Interrupt::LCDC => 1,
+      Interrupt::Stat => 1,
       Interrupt::TimerOverflow => 2,
       Interrupt::SerialIOComplete => 3,
       Interrupt::ButtonPressed => 4
@@ -28,7 +28,7 @@ impl Interrupt {
   pub fn get_routine_address(&self) -> u16 {
     match self {
       Interrupt::VerticalBlank => 0x40,
-      Interrupt::LCDC => 0x48,
+      Interrupt::Stat => 0x48,
       Interrupt::TimerOverflow => 0x50,
       Interrupt::SerialIOComplete => 0x58,
       Interrupt::ButtonPressed => 0x60
@@ -38,7 +38,7 @@ impl Interrupt {
   pub fn from_bit(bit: u8) -> Self {
     match bit {
       0 => Interrupt::VerticalBlank,
-      1 => Interrupt::LCDC,
+      1 => Interrupt::Stat,
       2 => Interrupt::TimerOverflow,
       3 => Interrupt::SerialIOComplete,
       4 => Interrupt::ButtonPressed,
@@ -47,22 +47,33 @@ impl Interrupt {
   }
 }
 
-pub struct InterruptController {
+pub trait InterruptController {
+  fn get_requested_interrupt(&self) -> Option<Interrupt>;
+  fn interrupts_enabled(&self) -> bool;
+  fn enable_interrupts(&mut self);
+  fn disable_interrupts(&mut self);
+  fn request_interrupt(&mut self, interrupt: Interrupt);
+  fn clear_interrupt(&mut self, interrupt: Interrupt);
+}
+
+pub struct InterruptControllerImpl {
   interrupt_request: u8,
   interrupt_enable: u8,
   interrupt_master_enable: bool,
 }
 
-impl InterruptController {
-  pub fn new() -> InterruptController {
-    InterruptController {
+impl InterruptControllerImpl {
+  pub fn new() -> InterruptControllerImpl {
+    InterruptControllerImpl {
       interrupt_request: 0,
       interrupt_enable: 0,
       interrupt_master_enable: false,
     }
   }
+}
 
-  pub fn get_requested_interrupt(&self) -> Option<Interrupt> {
+impl InterruptController for InterruptControllerImpl {
+  fn get_requested_interrupt(&self) -> Option<Interrupt> {
     if !self.interrupt_master_enable {
       Option::None
     } else {
@@ -75,28 +86,28 @@ impl InterruptController {
     }
   }
 
-  pub fn interrupts_enabled(&self) -> bool {
+  fn interrupts_enabled(&self) -> bool {
     self.interrupt_master_enable
   }
 
-  pub fn enable_interrupts(&mut self) {
+  fn enable_interrupts(&mut self) {
     self.interrupt_master_enable = true;
   }
 
-  pub fn disable_interrupts(&mut self) {
+  fn disable_interrupts(&mut self) {
     self.interrupt_master_enable = false;
   }
 
-  pub fn request_interrupt(&mut self, interrupt: Interrupt) {
+  fn request_interrupt(&mut self, interrupt: Interrupt) {
     self.interrupt_request = self.interrupt_request.set_bit(interrupt.get_bit());
   }
 
-  pub fn clear_interrupt(&mut self, interrupt: Interrupt) {
+  fn clear_interrupt(&mut self, interrupt: Interrupt) {
     self.interrupt_request = self.interrupt_request.reset_bit(interrupt.get_bit());
   }
 }
 
-impl Memory for InterruptController {
+impl Memory for InterruptControllerImpl {
   fn read(&self, address: u16) -> u8 {
     match address {
       0xFF0F => self.interrupt_request,
@@ -120,13 +131,13 @@ mod tests {
 
   #[test]
   fn get_requested_interrupt_returns_highest_priority() {
-    let mut interrupt_controller = InterruptController::new();
+    let mut interrupt_controller = InterruptControllerImpl::new();
     interrupt_controller.request_interrupt(Interrupt::SerialIOComplete);
-    interrupt_controller.request_interrupt(Interrupt::LCDC);
+    interrupt_controller.request_interrupt(Interrupt::Stat);
     interrupt_controller.enable_interrupts();
     interrupt_controller.write(0xFFFF, 0xFF);
-    assert_eq!(interrupt_controller.get_requested_interrupt(), Some(Interrupt::LCDC));
-    interrupt_controller.clear_interrupt(Interrupt::LCDC);
+    assert_eq!(interrupt_controller.get_requested_interrupt(), Some(Interrupt::Stat));
+    interrupt_controller.clear_interrupt(Interrupt::Stat);
     assert_eq!(interrupt_controller.get_requested_interrupt(), Some(Interrupt::SerialIOComplete));
     interrupt_controller.clear_interrupt(Interrupt::SerialIOComplete);
     assert_eq!(interrupt_controller.get_requested_interrupt(), None);
@@ -134,28 +145,28 @@ mod tests {
 
   #[test]
   fn interrupts_are_correctly_enabled() {
-    let mut interrupt_controller = InterruptController::new();
+    let mut interrupt_controller = InterruptControllerImpl::new();
     interrupt_controller.request_interrupt(Interrupt::SerialIOComplete);
-    interrupt_controller.request_interrupt(Interrupt::LCDC);
+    interrupt_controller.request_interrupt(Interrupt::Stat);
     interrupt_controller.enable_interrupts();
     interrupt_controller.write(0xFFFF, 0x08);
     assert_eq!(interrupt_controller.get_requested_interrupt(), Some(Interrupt::SerialIOComplete));
     interrupt_controller.clear_interrupt(Interrupt::SerialIOComplete);
     assert_eq!(interrupt_controller.get_requested_interrupt(), None);
     interrupt_controller.write(0xFFFF, 0x02);
-    assert_eq!(interrupt_controller.get_requested_interrupt(), Some(Interrupt::LCDC));
+    assert_eq!(interrupt_controller.get_requested_interrupt(), Some(Interrupt::Stat));
   }
 
   #[test]
   fn master_enable_toggles_interrupts() {
-    let mut interrupt_controller = InterruptController::new();
+    let mut interrupt_controller = InterruptControllerImpl::new();
     interrupt_controller.request_interrupt(Interrupt::SerialIOComplete);
-    interrupt_controller.request_interrupt(Interrupt::LCDC);
+    interrupt_controller.request_interrupt(Interrupt::Stat);
     interrupt_controller.write(0xFFFF, 0xFF);
     interrupt_controller.disable_interrupts();
     assert_eq!(interrupt_controller.get_requested_interrupt(), None);
     interrupt_controller.enable_interrupts();
-    assert_eq!(interrupt_controller.get_requested_interrupt(), Some(Interrupt::LCDC));
+    assert_eq!(interrupt_controller.get_requested_interrupt(), Some(Interrupt::Stat));
   }
 }
 

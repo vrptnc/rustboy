@@ -100,6 +100,13 @@ pub trait ByteUtil {
   fn reverse(&self) -> u8;
 }
 
+pub trait WordUtil {
+  fn get_high_byte(&self) -> u8;
+  fn get_low_byte(&self) -> u8;
+  fn set_high_byte(&self, byte: u8) -> Self;
+  fn set_low_byte(&self, byte: u8) -> Self;
+}
+
 impl BitUtil for u8 {
   type CrumbIterator = UnsignedCrumbIterator<u8, 8>;
 
@@ -188,6 +195,24 @@ impl BitUtil for u16 {
 
   fn crumbs(&self) -> Self::CrumbIterator {
     UnsignedCrumbIterator::new(*self)
+  }
+}
+
+impl WordUtil for u16 {
+  fn get_high_byte(&self) -> u8 {
+    (self >> 8) as u8
+  }
+
+  fn get_low_byte(&self) -> u8 {
+    *self as u8
+  }
+
+  fn set_high_byte(&self, byte: u8) -> Self {
+    (self & 0x00FF) | ((byte as u16) << 8)
+  }
+
+  fn set_low_byte(&self, byte: u8) -> Self {
+    (0xFF00 & self) | (byte as u16)
   }
 }
 

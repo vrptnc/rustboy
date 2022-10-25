@@ -3,8 +3,6 @@ use std::rc::Rc;
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
 
-const START_ADDRESS: usize = 0xFE00;
-
 #[derive(Copy, Clone)]
 pub struct ObjectAttributes(u8);
 
@@ -28,7 +26,6 @@ impl ObjectAttributes {
   pub fn palette_index(&self) -> u8 {
     self.0 & 0x7
   }
-
 }
 
 #[derive(Copy, Clone)]
@@ -50,25 +47,32 @@ impl OAMObject {
   }
 }
 
-pub type OAMRef = Rc<RefCell<OAM>>;
+pub trait OAM {
+  fn object_intersects_with_line(&self, object_index: u8, line: u8, use_8_x_16_tiles: bool) -> bool;
+  fn get_object(&self, object_index: u8) -> OAMObject;
+}
 
-pub struct OAM {
+pub struct OAMImpl {
   bytes: [u8; 160],
 }
 
-impl OAM {
-  pub fn new() -> OAM {
-    OAM {
+impl OAMImpl {
+  const START_ADDRESS: usize = 0xFE00;
+
+  pub fn new() -> OAMImpl {
+    OAMImpl {
       bytes: [0; 160]
     }
   }
+}
 
-  pub fn object_intersects_with_line(&self, object_index: u8, line: u8, use_8_x_16_tiles: bool) -> bool {
+impl OAM for OAMImpl {
+  fn object_intersects_with_line(&self, object_index: u8, line: u8, use_8_x_16_tiles: bool) -> bool {
     let object_lcd_y = self.bytes[4 * object_index as usize];
     object_lcd_y <= line + 16 && object_lcd_y > (line + if use_8_x_16_tiles { 0 } else { 8 })
   }
 
-  pub fn get_object(&self, object_index: u8) -> OAMObject {
+  fn get_object(&self, object_index: u8) -> OAMObject {
     let byte_offset = 4 * object_index as usize;
     let object_bytes = &self.bytes[byte_offset..(byte_offset + 4)];
     OAMObject {
@@ -80,12 +84,12 @@ impl OAM {
   }
 }
 
-impl Memory for OAM {
+impl Memory for OAMImpl {
   fn read(&self, address: u16) -> u8 {
-    self.bytes[address as usize - START_ADDRESS]
+    self.bytes[address as usize - OAMImpl::START_ADDRESS]
   }
 
   fn write(&mut self, address: u16, value: u8) {
-    self.bytes[address as usize - START_ADDRESS] = value;
+    self.bytes[address as usize - OAMImpl::START_ADDRESS] = value;
   }
 }

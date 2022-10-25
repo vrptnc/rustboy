@@ -13,7 +13,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 use cpu::cpu::*;
-use memory::memory_bus::*;
+use memory::main_memory::*;
 use web_sys::console;
 use crate::infrastructure::time::clock::JSClock;
 use crate::time::duration::Duration;
