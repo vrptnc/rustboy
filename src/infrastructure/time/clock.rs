@@ -1,6 +1,3 @@
-use crate::time::duration::Duration;
-use crate::time::time::Clock;
-
 pub struct JSClock {
   previous_time: Option<f64>
 }
@@ -19,19 +16,5 @@ impl JSClock {
     } else {
       js_sys::Date::now()
     }
-  }
-}
-
-impl Clock for JSClock {
-  fn now(&self) -> Duration {
-    let current = JSClock::get_milliseconds();
-    let nanoseconds = current * 1_000_000f64;
-    Duration {
-      nanoseconds: nanoseconds as u128
-    }
-  }
-
-  fn wait(cycles: u32) {
-    todo!()
   }
 }

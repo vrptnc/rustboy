@@ -1,12 +1,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use crate::MainMemory;
 
 pub trait Memory {
-  fn read(&self, address: usize) -> u8;
-  fn write(&mut self, address: usize, value: u8);
+  fn read(&self, address: u16) -> u8;
+  fn write(&mut self, address: u16, value: u8);
 }
-
-pub type MemoryRef = Rc<RefCell<dyn Memory>>;
 
 pub enum ROMSize {
   KB32,
@@ -56,29 +55,48 @@ impl RAMSize {
   }
 }
 
+#[derive(Copy, Clone)]
+pub enum CGBMode {
+  Monochrome,
+  Color,
+  PGB,
+}
+
+impl CGBMode {
+  pub fn from_byte(byte: u8) -> CGBMode {
+    match byte & 0xBF {
+      0x00 => CGBMode::Monochrome,
+      0x80 => CGBMode::Color,
+      0x82 => CGBMode::PGB,
+      0x84 => CGBMode::PGB,
+      _ => panic!("Invalid CGB byte:  {:#x}", byte)
+    }
+  }
+}
+
 #[cfg(test)]
 pub mod test {
   use crate::memory::memory::Memory;
 
   pub struct MockMemory {
-    bytes: [u8; 0x10000],
+    bytes: Vec<u8>,
   }
 
   impl MockMemory {
-    pub fn new() -> MockMemory {
+    pub fn new(bytes: usize) -> MockMemory {
       MockMemory {
-        bytes: [0; 0x10000]
+        bytes: vec![0; bytes]
       }
     }
   }
 
   impl Memory for MockMemory {
-    fn read(&self, address: usize) -> u8 {
-      self.bytes[address]
+    fn read(&self, address: u16) -> u8 {
+      self.bytes[address as usize]
     }
 
-    fn write(&mut self, address: usize, value: u8) {
-      self.bytes[address] = value
+    fn write(&mut self, address: u16, value: u8) {
+      self.bytes[address as usize] = value
     }
   }
 }

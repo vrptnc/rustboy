@@ -1,8 +1,5 @@
 use std::cmp::Ordering;
-use std::cmp::Ordering::Equal;
 use std::ops;
-use crate::time::time::TimeUnit;
-use crate::time::time::TimeUnit::Nanoseconds;
 
 #[derive(Copy, Clone)]
 pub struct RTCDuration {
@@ -13,18 +10,27 @@ pub struct RTCDuration {
 }
 
 impl RTCDuration {
+  pub fn new() -> RTCDuration {
+    RTCDuration {
+      seconds: 0,
+      minutes: 0,
+      hours: 0,
+      days: 0
+    }
+  }
+
   pub fn to_duration(&self) -> Duration {
-    Duration::from_seconds(self.seconds as u64 +
-        (self.minutes as u64) * 60 +
-        (self.hours as u64) * 3600 +
-        (self.days as u64) * 86400,
+    Duration::from_seconds(self.seconds as u128 +
+                             (self.minutes as u128) * 60 +
+                             (self.hours as u128) * 3600 +
+                             (self.days as u128) * 86400,
     )
   }
 }
 
 #[derive(Copy, Clone)]
 pub struct Duration {
-  pub nanoseconds: u128
+  pub nanoseconds: u128,
 }
 
 impl Duration {
@@ -34,28 +40,16 @@ impl Duration {
     }
   }
 
-  pub fn from_seconds<T>(seconds: T) -> Duration {
+  pub fn from_seconds(seconds: u128) -> Duration {
     Duration {
-      nanoseconds: (seconds as u128) * 1_000_000_000
+      nanoseconds: seconds * 1_000_000_000
     }
   }
 
-  pub fn from_nanoseconds<T>(nanoseconds: T) -> Duration {
+  pub fn from_nanoseconds(nanoseconds: u128) -> Duration {
     Duration {
-      nanoseconds: nanoseconds as u128
+      nanoseconds
     }
-  }
-
-  pub fn add(&self, amount: u64, unit: TimeUnit) -> Duration {
-    *self + Duration::from_nanoseconds(amount * unit.to_nanoseconds())
-  }
-
-  pub fn subtract(&self, amount: u64, unit: TimeUnit) -> Duration {
-    *self - Duration::from_nanoseconds(amount * unit.to_nanoseconds())
-  }
-
-  pub fn divide_by(&self, amount: u64, unit: TimeUnit) -> u128 {
-    *self / Duration::from_nanoseconds(amount * unit.to_nanoseconds())
   }
 
   pub fn to_rtc_duration(&self) -> RTCDuration {
@@ -116,7 +110,7 @@ impl PartialOrd for Duration {
     if self.nanoseconds > other.nanoseconds {
       Some(Ordering::Greater)
     } else if self.nanoseconds < other.nanoseconds {
-      Some(Order::Less)
+      Some(Ordering::Less)
     } else {
       Some(Ordering::Equal)
     }

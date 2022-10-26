@@ -1,6 +1,5 @@
 use crate::memory::mbc::Loadable;
 use crate::memory::memory::{Memory, RAMSize, ROMSize};
-use crate::util::bit_util::BitUtil;
 
 struct MBC5 {
   ram_enabled: bool,
@@ -23,24 +22,24 @@ impl MBC5 {
 }
 
 impl Memory for MBC5 {
-  fn read(&self, address: usize) -> u8 {
+  fn read(&self, address: u16) -> u8 {
     match address {
       0x0000..=0x3FFF => {
-        self.rom[address]
-      },
+        self.rom[address as usize]
+      }
       0x4000..=0x7FFF => {
-        let address_in_rom = (address & 0x3FFF) | (self.rom_bank_address << 14);
+        let address_in_rom = ((address as usize) & 0x3FFF) | (self.rom_bank_address << 14);
         self.rom[address_in_rom]
-      },
+      }
       0xA000..=0xBFFF => {
-        let address_in_ram = (self.ram_bank_address << 13) | (address & 0x1FFF);
+        let address_in_ram = ((address as usize) & 0x1FFF) | (self.ram_bank_address << 13);
         self.ram[address_in_ram]
-      },
+      }
       _ => panic!("Can't read from address {:#06x} on MBC5", address)
     }
   }
 
-  fn write(&mut self, address: usize, value: u8) {
+  fn write(&mut self, address: u16, value: u8) {
     match address {
       0x0000..=0x1FFF => {
         self.ram_enabled = (value & 0x0F) == 0x0A;
@@ -56,7 +55,7 @@ impl Memory for MBC5 {
       }
       0xA000..=0xBFFF => {
         if self.ram_enabled {
-          let address_in_ram = (self.ram_bank_address << 13) | (address & 0x1FFF);
+          let address_in_ram = ((address as usize) & 0x1FFF) | (self.ram_bank_address << 13);
           self.ram[address_in_ram] = value
         }
       }
@@ -66,12 +65,12 @@ impl Memory for MBC5 {
 }
 
 impl Loadable for MBC5 {
-  fn load_byte(&mut self, index: usize, value: u8) {
-    self.rom[index] = value;
+  fn load_byte(&mut self, address: usize, value: u8) {
+    self.rom[address] = value;
   }
 
-  fn load_bytes(&mut self, index: usize, values: &[u8]) {
-    self.rom.as_mut_slice()[index..(index + values.len())].copy_from_slice(values);
+  fn load_bytes(&mut self, address: usize, values: &[u8]) {
+    self.rom.as_mut_slice()[address..(address + values.len())].copy_from_slice(values);
   }
 }
 
@@ -91,11 +90,13 @@ mod tests {
     memory.write(0xA000, 0x12);
     memory.write(0xB000, 0x34);
     memory.write(0xBFFF, 0x56);
-    memory.write(0x4000, 0x00); // Switch RAM bank to bank 0
+    memory.write(0x4000, 0x00);
+    // Switch RAM bank to bank 0
     assert_eq_hex!(memory.read(0xA000), 0xAB);
     assert_eq_hex!(memory.read(0xB000), 0xCD);
     assert_eq_hex!(memory.read(0xBFFF), 0xEF);
-    memory.write(0x4000, 0x07); // Switch RAM bank to bank 7
+    memory.write(0x4000, 0x07);
+    // Switch RAM bank to bank 7
     assert_eq_hex!(memory.read(0xA000), 0x12);
     assert_eq_hex!(memory.read(0xB000), 0x34);
     assert_eq_hex!(memory.read(0xBFFF), 0x56);
@@ -124,16 +125,19 @@ mod tests {
     memory.load_byte(0x420000, 0xAA); // Load bytes into bank 0x108
     memory.load_byte(0x421ABC, 0xBB);
     memory.load_byte(0x423FFF, 0xCC);
-    memory.write(0x2000, 0x01); // Switch to bank 1
+    memory.write(0x2000, 0x01);
+    // Switch to bank 1
     assert_eq_hex!(memory.read(0x4000), 0x12);
     assert_eq_hex!(memory.read(0x5ABC), 0x34);
     assert_eq_hex!(memory.read(0x7FFF), 0x56);
-    memory.write(0x2000, 0x05); // Switch to bank 5
+    memory.write(0x2000, 0x05);
+    // Switch to bank 5
     assert_eq_hex!(memory.read(0x4000), 0x78);
     assert_eq_hex!(memory.read(0x5ABC), 0x9A);
     assert_eq_hex!(memory.read(0x7FFF), 0xBC);
     memory.write(0x3000, 0x01); // Switch to bank 0x108
-    memory.write(0x2000, 0x08); // Switch to bank 0x108
+    memory.write(0x2000, 0x08);
+    // Switch to bank 0x108
     assert_eq_hex!(memory.read(0x4000), 0xAA);
     assert_eq_hex!(memory.read(0x5ABC), 0xBB);
     assert_eq_hex!(memory.read(0x7FFF), 0xCC);

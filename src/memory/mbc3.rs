@@ -1,66 +1,140 @@
-use crate::context::context::{Context, Executable};
-use crate::time::duration::Duration;
+use std::cell::{RefCell, RefMut};
+use crate::time::duration::{Duration, RTCDuration};
 use crate::memory::mbc::Loadable;
 use crate::memory::memory::{Memory, RAMSize, ROMSize};
-use crate::time::time::{ClockAware, TimingAware};
-use crate::util::bit_util::BitUtil;
+use crate::time::time::ClockAware;
+use crate::util::bit_util::{BitUtil, WordUtil};
 
 #[derive(Copy, Clone)]
-pub struct RTCFields {
-  pub seconds: u8,
-  pub minutes: u8,
-  pub hours: u8,
-  pub days_low: u8,
-  pub days_high: u8,
+struct FormattedRTC {
+  nanoseconds: u32,
+  seconds: u8,
+  minutes: u8,
+  hours: u8,
+  days_low: u8,
+  days_high: u8,
 }
 
-impl RTCFields {
-  pub fn new() -> RTCFields {
-    RTCFields {
-      seconds: 0,
-      minutes: 0,
-      hours: 0,
-      days_low: 0,
-      days_high: 0,
+impl FormattedRTC {
+  const DAYS_NANOSECONDS: u64 = 24 * 3600 * 1_000_000_000;
+  const HOURS_NANOSECONDS: u64 = 3600 * 1_000_000_000;
+  const MINUTES_NANOSECONDS: u64 = 60 * 1_000_000_000;
+  const SECONDS_NANOSECONDS: u64 = 1_000_000_000;
+
+  pub fn from_rtc(rtc: &RTC) -> FormattedRTC {
+    let mut remaining_nanoseconds = rtc.nanoseconds;
+    let days = (remaining_nanoseconds / FormattedRTC::DAYS_NANOSECONDS) as u16;
+    remaining_nanoseconds = remaining_nanoseconds % FormattedRTC::DAYS_NANOSECONDS;
+    let hours = (remaining_nanoseconds / FormattedRTC::HOURS_NANOSECONDS) as u8;
+    remaining_nanoseconds = remaining_nanoseconds % FormattedRTC::HOURS_NANOSECONDS;
+    let minutes = (remaining_nanoseconds / FormattedRTC::MINUTES_NANOSECONDS) as u8;
+    remaining_nanoseconds = remaining_nanoseconds % FormattedRTC::MINUTES_NANOSECONDS;
+    let seconds = (remaining_nanoseconds / FormattedRTC::SECONDS_NANOSECONDS) as u8;
+    remaining_nanoseconds = remaining_nanoseconds % FormattedRTC::SECONDS_NANOSECONDS;
+    FormattedRTC {
+      nanoseconds: remaining_nanoseconds as u32,
+      seconds,
+      minutes,
+      hours,
+      days_low: days.get_low_byte(),
+      days_high: (days.get_high_byte() & 0x01) | (if rtc.halted { 0x40 } else { 0x00 }) | (if rtc.days_carry { 0x80 } else { 0x00 }),
     }
   }
+}
 
-  fn is_halted(&self) -> bool {
-    self.days_high.get_bit(6)
-  }
+struct RTC {
+  nanoseconds: u64,
+  days_carry: bool,
+  halted: bool,
+  formatted_rtc: RefCell<Option<FormattedRTC>>,
+}
 
-  pub fn tick(&self, duration: Duration) -> RTCFields {
-    if self.is_halted() {
-      *self
-    } else {
-      let new_duration = self.to_duration() + duration;
-      let rtc_duration = new_duration.to_rtc_duration();
-      let days_carry = self.days_high.get_bit(7) || rtc_duration.days >= 512;
-      RTCFields {
-        seconds: rtc_duration.seconds,
-        minutes: rtc_duration.minutes,
-        hours: rtc_duration.hours,
-        days_low: (rtc_duration.days % 256) as u8,
-        days_high: (if rtc_duration.days >= 256 && rtc_duration.days < 512 { 1u8 } else { 0u8 }) | (if days_carry { 0x80u8 } else { 0u8 }),
-      }
+impl Clone for RTC {
+  fn clone(&self) -> Self {
+    RTC {
+      nanoseconds: self.nanoseconds,
+      days_carry: self.days_carry,
+      halted: self.halted,
+      formatted_rtc: self.formatted_rtc.clone(),
     }
   }
+}
 
-  pub fn to_duration(&self) -> Duration {
-    Duration {
+impl RTC {
+  const MAX_DAYS_IN_NANOSECONDS: u64 = 512 * 24 * 3600 * 1_000_000_000;
+
+  pub fn new() -> RTC {
+    RTC {
       nanoseconds: 0,
-      seconds: self.seconds as u64 +
-        60 * self.minutes as u64 +
-        3600 * self.hours as u64 +
-        86400 * self.days_low as u64 +
-        86400 * 256 * (self.days_high & 0x01) as u64,
+      days_carry: false,
+      halted: false,
+      formatted_rtc: RefCell::new(None),
     }
+  }
+
+  pub fn update_from_formatted_rtc(&mut self, formatted_rtc: FormattedRTC) {
+    self.nanoseconds = formatted_rtc.nanoseconds as u64 +
+      formatted_rtc.seconds as u64 * FormattedRTC::SECONDS_NANOSECONDS +
+      formatted_rtc.minutes as u64 * FormattedRTC::MINUTES_NANOSECONDS +
+      formatted_rtc.hours as u64 * FormattedRTC::HOURS_NANOSECONDS +
+      (formatted_rtc.days_low as u64 + if formatted_rtc.days_high.get_bit(0) { 0x100u64 } else { 0x000u64 }) * FormattedRTC::DAYS_NANOSECONDS;
+    self.days_carry = formatted_rtc.days_high.get_bit(7);
+    self.halted = formatted_rtc.days_high.get_bit(6);
+    self.formatted_rtc.replace(Some(formatted_rtc));
+  }
+
+  pub fn set_seconds(&mut self, seconds: u8) {
+    let mut formatted_rtc = *self.get_formatted_rtc();
+    formatted_rtc.seconds = seconds;
+    self.update_from_formatted_rtc(formatted_rtc);
+  }
+
+  pub fn set_minutes(&mut self, minutes: u8) {
+    let mut formatted_rtc = *self.get_formatted_rtc();
+    formatted_rtc.minutes = minutes;
+    self.update_from_formatted_rtc(formatted_rtc);
+  }
+
+  pub fn set_hours(&mut self, hours: u8) {
+    let mut formatted_rtc = *self.get_formatted_rtc();
+    formatted_rtc.hours = hours;
+    self.update_from_formatted_rtc(formatted_rtc);
+  }
+
+  pub fn set_days_low(&mut self, days_low: u8) {
+    let mut formatted_rtc = *self.get_formatted_rtc();
+    formatted_rtc.days_low = days_low;
+    self.update_from_formatted_rtc(formatted_rtc);
+  }
+
+  pub fn set_days_high(&mut self, days_high: u8) {
+    let mut formatted_rtc = *self.get_formatted_rtc();
+    formatted_rtc.days_high = days_high;
+    self.update_from_formatted_rtc(formatted_rtc);
+  }
+
+  pub fn tick(&mut self, nanoseconds: u64) {
+    if self.halted {
+      return;
+    }
+    let new_nanoseconds = self.nanoseconds + nanoseconds;
+    if new_nanoseconds >= RTC::MAX_DAYS_IN_NANOSECONDS {
+      self.nanoseconds = new_nanoseconds % RTC::MAX_DAYS_IN_NANOSECONDS;
+      self.days_carry = true;
+    } else {
+      self.nanoseconds = new_nanoseconds;
+    }
+    self.formatted_rtc.replace(None);
+  }
+
+  pub fn get_formatted_rtc(&self) -> RefMut<FormattedRTC> {
+    RefMut::map(self.formatted_rtc.borrow_mut(), |formatted_rtc| formatted_rtc.get_or_insert(FormattedRTC::from_rtc(self)))
   }
 }
 
 struct MBC3 {
-  rtc: RTCFields,
-  rtc_registers: RTCFields,
+  rtc: RTC,
+  rtc_registers: RTC,
   clock_counter_data_latch: bool,
   ram_enabled: bool,
   rom_bank_address: usize,
@@ -72,8 +146,8 @@ struct MBC3 {
 impl MBC3 {
   fn new(rom_size: ROMSize, ram_size: RAMSize) -> MBC3 {
     MBC3 {
-      rtc: RTCFields::new(),
-      rtc_registers: RTCFields::new(),
+      rtc: RTC::new(),
+      rtc_registers: RTC::new(),
       clock_counter_data_latch: false,
       ram_enabled: false,
       rom_bank_address: 0x01,
@@ -84,37 +158,44 @@ impl MBC3 {
   }
 
   fn latch_counter_data(&mut self) {
-    self.rtc_registers = self.rtc;
+    self.rtc_registers = self.rtc.clone();
   }
-}
 
-impl ClockAware for MBC3 {
-  fn tick(&mut self) {
-    self.rtc = self.rtc.tick(Duration::from_nanoseconds(1000));
+  pub fn tick(&mut self) {
+    self.handle_tick(false);
+  }
+
+  pub fn double_tick(&mut self) {
+    self.handle_tick(true);
+  }
+
+  fn handle_tick(&mut self, double_speed: bool) {
+    let passed_nanoseconds = if double_speed { 500 } else { 1000 };
+    self.rtc.tick(passed_nanoseconds);
   }
 }
 
 impl Memory for MBC3 {
-  fn read(&self, address: usize) -> u8 {
+  fn read(&self, address: u16) -> u8 {
     match address {
       0x0000..=0x3FFF => {
-        self.rom[address]
+        self.rom[address as usize]
       }
       0x4000..=0x7FFF => {
-        let address_in_rom = (address & 0x3FFF) | (self.rom_bank_address << 14);
+        let address_in_rom = ((address as usize) & 0x3FFF) | (self.rom_bank_address << 14);
         self.rom[address_in_rom]
       }
       0xA000..=0xBFFF => {
         match self.ram_bank_address {
           0x0..=0x7 => {
-            let address_in_ram = (self.ram_bank_address << 13) | (address & 0x1FFF);
+            let address_in_ram = ((address as usize) & 0x1FFF) | (self.ram_bank_address << 13);
             self.ram[address_in_ram]
           }
-          0x8 => self.rtc_registers.seconds,
-          0x9 => self.rtc_registers.minutes,
-          0xA => self.rtc_registers.hours,
-          0xB => self.rtc_registers.days_low,
-          0xC => self.rtc_registers.days_high,
+          0x8 => self.rtc_registers.get_formatted_rtc().seconds,
+          0x9 => self.rtc_registers.get_formatted_rtc().minutes,
+          0xA => self.rtc_registers.get_formatted_rtc().hours,
+          0xB => self.rtc_registers.get_formatted_rtc().days_low,
+          0xC => self.rtc_registers.get_formatted_rtc().days_high,
           _ => panic!("{:#06x} is not a valid RAM bank address", self.ram_bank_address)
         }
       }
@@ -122,7 +203,7 @@ impl Memory for MBC3 {
     }
   }
 
-  fn write(&mut self, address: usize, value: u8) {
+  fn write(&mut self, address: u16, value: u8) {
     match address {
       0x0000..=0x1FFF => {
         self.ram_enabled = (value & 0x0F) == 0x0A;
@@ -147,28 +228,28 @@ impl Memory for MBC3 {
         if self.ram_enabled {
           match self.ram_bank_address {
             0x0..=0x7 => {
-              let address_in_ram = (self.ram_bank_address << 13) | (address & 0x1FFF);
+              let address_in_ram = ((address as usize) & 0x1FFF) | (self.ram_bank_address << 13);
               self.ram[address_in_ram] = value;
             }
             0x8 => {
-              self.rtc_registers.seconds = value;
-              self.rtc.seconds = value;
+              self.rtc_registers.set_seconds(value);
+              self.rtc.set_seconds(value);
             }
             0x9 => {
-              self.rtc_registers.minutes = value;
-              self.rtc.minutes = value;
+              self.rtc_registers.set_minutes(value);
+              self.rtc.set_minutes(value);
             }
             0xA => {
-              self.rtc_registers.hours = value;
-              self.rtc.hours = value;
+              self.rtc_registers.set_hours(value);
+              self.rtc.set_hours(value);
             }
             0xB => {
-              self.rtc_registers.days_low = value;
-              self.rtc.days_low = value;
+              self.rtc_registers.set_days_low(value);
+              self.rtc.set_days_low(value);
             }
             0xC => {
-              self.rtc_registers.days_high = value;
-              self.rtc.days_high = value;
+              self.rtc_registers.set_days_high(value);
+              self.rtc.set_days_high(value);
             }
             _ => panic!("{:#06x} is not a valid RAM bank address", self.ram_bank_address)
           };
@@ -180,12 +261,12 @@ impl Memory for MBC3 {
 }
 
 impl Loadable for MBC3 {
-  fn load_byte(&mut self, index: usize, value: u8) {
-    self.rom[index] = value;
+  fn load_byte(&mut self, address: usize, value: u8) {
+    self.rom[address] = value;
   }
 
-  fn load_bytes(&mut self, index: usize, values: &[u8]) {
-    self.rom.as_mut_slice()[index..(index + values.len())].copy_from_slice(values);
+  fn load_bytes(&mut self, address: usize, values: &[u8]) {
+    self.rom.as_mut_slice()[address..((address + values.len()))].copy_from_slice(values);
   }
 }
 
@@ -193,7 +274,7 @@ impl Loadable for MBC3 {
 mod tests {
   use super::*;
   use assert_hex::assert_eq_hex;
-  use crate::time::duration::RTCDuration;
+
 
   #[test]
   fn read_write_ram() {
@@ -292,40 +373,44 @@ mod tests {
     let mut memory = MBC3::new(ROMSize::KB256, RAMSize::KB32);
     memory.write(0x0000, 0xA); // Enable RAM
     memory.write(0x4000, 0x08); // Set RAM bank to RTC seconds
-    memory.write(0xA000, 56); // Write 56 seconds
+    memory.write(0xA000, 59); // Write 59 seconds
     memory.write(0x4000, 0x09); // Set RAM bank to RTC minutes
-    memory.write(0xA000, 34); // Write 34 minutes
+    memory.write(0xA000, 59); // Write 59 minutes
     memory.write(0x4000, 0x0A); // Set RAM bank to RTC hours
-    memory.write(0xA000, 12); // Write 12 hours
+    memory.write(0xA000, 23); // Write 23 hours
+
     memory.write(0x4000, 0x0B); // Set RAM bank to RTC days low
-    memory.write(0xA000, 105); // Write 105 days low
+    memory.write(0xA000, 0xFF); // Write 512 days
     memory.write(0x4000, 0x0C); // Set RAM bank to RTC days high
-    memory.write(0xA000, 0x01); // Write 361 days high (non-halted)
+    memory.write(0xA000, 0x01); // Write 512 days (non-halted, no carry)
     memory.write(0x0000, 0xB); // Disable RAM
-    memory.tick();
+    // Tick a full second (1 tick = 1 microsecond)
+    for _ in (0..1_000_000usize) {
+      memory.handle_tick(false);
+    }
+    memory.handle_tick(false);
     memory.write(0x4000, 0x08); // Set RAM bank to RTC seconds
-    assert_eq!(memory.read(0xA000), 56); // Read seconds
+    assert_eq!(memory.read(0xA000), 59); // Read seconds
     memory.write(0x4000, 0x09); // Set RAM bank to RTC minutes
-    assert_eq!(memory.read(0xA000), 34); // Read minutes
+    assert_eq!(memory.read(0xA000), 59); // Read minutes
     memory.write(0x4000, 0x0A); // Set RAM bank to RTC hours
-    assert_eq!(memory.read(0xA000), 12); // Read hours
+    assert_eq!(memory.read(0xA000), 23); // Read hours
     memory.write(0x4000, 0x0B); // Set RAM bank to RTC days low
-    assert_eq!(memory.read(0xA000), 105); // Read days low
-    memory.write(0x4000, 0x0C);
-    // Set RAM bank to RTC days high
-    assert_eq_hex!(memory.read(0xA000), 0x01); // Read days high (non-halted)
+    assert_eq!(memory.read(0xA000), 0xFF); // Read days low
+    memory.write(0x4000, 0x0C); // Set RAM bank to RTC days high
+    assert_eq_hex!(memory.read(0xA000), 0x01); // Read days high (non-halted, no carry)
+
     memory.write(0x6000, 0x00);
     memory.write(0x6000, 0x01);
     memory.write(0x4000, 0x08); // Set RAM bank to RTC seconds
-    assert_eq!(memory.read(0xA000), 38); // Read seconds
+    assert_eq!(memory.read(0xA000), 0); // Read seconds
     memory.write(0x4000, 0x09); // Set RAM bank to RTC minutes
-    assert_eq!(memory.read(0xA000), 02); // Read minutes
+    assert_eq!(memory.read(0xA000), 0); // Read minutes
     memory.write(0x4000, 0x0A); // Set RAM bank to RTC hours
-    assert_eq!(memory.read(0xA000), 2); // Read hours
+    assert_eq!(memory.read(0xA000), 0); // Read hours
     memory.write(0x4000, 0x0B); // Set RAM bank to RTC days low
-    assert_eq!(memory.read(0xA000), 0x05); // Read days low
-    memory.write(0x4000, 0x0C);
-    // Set RAM bank to RTC days high
-    assert_eq_hex!(memory.read(0xA000), 0x80); // Read days high (non-halted)
+    assert_eq!(memory.read(0xA000), 0); // Read days low
+    memory.write(0x4000, 0x0C); // Set RAM bank to RTC days high
+    assert_eq_hex!(memory.read(0xA000), 0x80); // Read days high (non-halted, carry enabled)
   }
 }
