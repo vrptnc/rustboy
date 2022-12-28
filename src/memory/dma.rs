@@ -1,12 +1,12 @@
 use crate::memory::memory::Memory;
 use crate::memory::oam::OAMImpl;
 use crate::memory::vram::VRAMImpl;
-use crate::memory::wram::WRAM;
+use crate::memory::wram::WRAMImpl;
 
 pub struct DMAMemoryView<'a> {
   rom: &'a dyn Memory,
   vram: &'a mut VRAMImpl,
-  wram: &'a WRAM,
+  wram: &'a WRAMImpl,
   oam: &'a mut OAMImpl
 }
 

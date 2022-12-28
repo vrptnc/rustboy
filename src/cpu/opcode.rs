@@ -2,8 +2,8 @@
 pub struct Opcode(pub u8);
 
 // Opcode bit structure: xxyy yzzz
-// Opcode bit structure: xxdd xxxx
-// Opcode bit structure: xxxc cxxx
+// Opcode bit structure: **dd ****
+// Opcode bit structure: ***c c***
 impl Opcode {
 
   pub fn value(&self) -> u8 {

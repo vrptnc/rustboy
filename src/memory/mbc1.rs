@@ -1,5 +1,5 @@
 use crate::memory::memory::{Memory, ROMSize, RAMSize};
-use crate::memory::mbc::Loadable;
+use crate::memory::mbc::{Loadable, MBC};
 
 pub struct MBC1 {
   ram_enabled: bool,
@@ -9,6 +9,8 @@ pub struct MBC1 {
   rom: Vec<u8>,
   ram: Vec<u8>,
 }
+
+impl MBC for MBC1 {}
 
 impl MBC1 {
   pub fn new(rom_size: ROMSize, ram_size: RAMSize) -> MBC1 {

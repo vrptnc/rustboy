@@ -1,8 +1,6 @@
 use std::cell::{RefCell, RefMut};
-use crate::time::duration::{Duration, RTCDuration};
-use crate::memory::mbc::Loadable;
+use crate::memory::mbc::{Loadable, MBC};
 use crate::memory::memory::{Memory, RAMSize, ROMSize};
-use crate::time::time::ClockAware;
 use crate::util::bit_util::{BitUtil, WordUtil};
 
 #[derive(Copy, Clone)]
@@ -132,7 +130,7 @@ impl RTC {
   }
 }
 
-struct MBC3 {
+pub struct MBC3 {
   rtc: RTC,
   rtc_registers: RTC,
   clock_counter_data_latch: bool,
@@ -143,8 +141,10 @@ struct MBC3 {
   ram: Vec<u8>,
 }
 
+impl MBC for MBC3 {}
+
 impl MBC3 {
-  fn new(rom_size: ROMSize, ram_size: RAMSize) -> MBC3 {
+  pub fn new(rom_size: ROMSize, ram_size: RAMSize) -> MBC3 {
     MBC3 {
       rtc: RTC::new(),
       rtc_registers: RTC::new(),
@@ -161,15 +161,7 @@ impl MBC3 {
     self.rtc_registers = self.rtc.clone();
   }
 
-  pub fn tick(&mut self) {
-    self.handle_tick(false);
-  }
-
-  pub fn double_tick(&mut self) {
-    self.handle_tick(true);
-  }
-
-  fn handle_tick(&mut self, double_speed: bool) {
+  fn tick(&mut self, double_speed: bool) {
     let passed_nanoseconds = if double_speed { 500 } else { 1000 };
     self.rtc.tick(passed_nanoseconds);
   }
@@ -385,10 +377,10 @@ mod tests {
     memory.write(0xA000, 0x01); // Write 512 days (non-halted, no carry)
     memory.write(0x0000, 0xB); // Disable RAM
     // Tick a full second (1 tick = 1 microsecond)
-    for _ in (0..1_000_000usize) {
-      memory.handle_tick(false);
+    for _ in 0..1_000_000usize {
+      memory.tick(false);
     }
-    memory.handle_tick(false);
+    memory.tick(false);
     memory.write(0x4000, 0x08); // Set RAM bank to RTC seconds
     assert_eq!(memory.read(0xA000), 59); // Read seconds
     memory.write(0x4000, 0x09); // Set RAM bank to RTC minutes

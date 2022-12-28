@@ -1,75 +1,34 @@
-use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::rc::Rc;
+
 use byteorder::{LittleEndian, ReadBytesExt};
 use mockall::automock;
-use crate::cpu::interrupts::{Interrupt, InterruptController, InterruptControllerImpl, InterruptControllerRef};
+
+use crate::cpu::decoder::{InstructionDecoder, InstructionScheduler};
+use crate::cpu::instruction::{ByteArithmeticParams, ByteCastingParams, ByteLocation, ByteLogicParams, ByteOperationParams, ByteRotationParams, ByteShiftParams, Instruction, WordArithmeticParams, WordLocation, WordOperationParams};
+use crate::cpu::interrupts::InterruptController;
 use crate::cpu::opcode::Opcode;
 use crate::cpu::register::{ByteRegister, Registers, WordRegister};
 use crate::memory::memory::Memory;
-use crate::MainMemory;
-use crate::time::time::ClockAware;
 use crate::util::bit_util::BitUtil;
-
-#[derive(Copy, Clone)]
-enum ByteLocation {
-  Value(u8),
-  Register(ByteRegister),
-  ByteBuffer,
-  LowerAddressBuffer,
-  UpperAddressBuffer,
-  LowerWordBuffer,
-  UpperWordBuffer,
-  NextMemoryByte,
-  MemoryReferencedByAddressBuffer,
-  MemoryReferencedByRegister(WordRegister),
-}
-
-#[derive(Copy, Clone)]
-enum WordLocation {
-  Value(u16),
-  Register(WordRegister),
-  WordBuffer,
-  AddressBuffer,
-}
-
-#[derive(Copy, Clone)]
-struct ByteArithmeticParams {
-  first: ByteLocation,
-  second: ByteLocation,
-  destination: ByteLocation,
-  use_carry: bool,
-  flag_mask: u8,
-}
-
-#[derive(Copy, Clone)]
-struct WordArithmeticParams {
-  first: WordLocation,
-  second: WordLocation,
-  destination: WordLocation,
-  flag_mask: u8,
-}
-
-struct InstructionContext {
-  opcode: Opcode,
-  byte_buffer: u8,
-  word_buffer: u16,
-  address_buffer: u16,
-}
-
-type Operation = Box<dyn FnOnce(&mut CPUImpl, &mut dyn Memory)>;
 
 #[automock]
 pub trait CPU {
+  fn tick(&mut self, memory: &mut dyn Memory, interrupt_controller: &mut dyn InterruptController);
   fn enabled(&self) -> bool;
   fn enable(&mut self);
   fn disable(&mut self);
 }
 
+struct InstructionContext {
+  byte_buffer: u8,
+  word_buffer: u16,
+  address_buffer: u16,
+}
+
 pub struct CPUImpl {
   enabled: bool,
   context: InstructionContext,
-  operations: VecDeque<Operation>,
+  instructions: VecDeque<Instruction>,
   registers: Registers,
 }
 
@@ -85,6 +44,25 @@ impl CPU for CPUImpl {
   fn disable(&mut self) {
     self.enabled = false;
   }
+
+  fn tick(&mut self, memory: &mut dyn Memory, interrupt_controller: &mut dyn InterruptController) {
+    if !self.instructions.is_empty() {
+      self.execute_machine_cyle(memory, interrupt_controller);
+    } else if self.enabled {
+      if let Some(interrupt) = interrupt_controller.get_requested_interrupt() {
+        InstructionDecoder::schedule_call_interrupt_routine(self, interrupt);
+      } else {
+        self.decode_instruction(memory);
+      }
+      self.execute_machine_cyle(memory, interrupt_controller);
+    }
+  }
+}
+
+impl InstructionScheduler for CPUImpl {
+  fn schedule(&mut self, instruction: Instruction) {
+    self.instructions.push_back(instruction);
+  }
 }
 
 impl CPUImpl {
@@ -92,13 +70,91 @@ impl CPUImpl {
     CPUImpl {
       enabled: true,
       context: InstructionContext {
-        opcode: Opcode(0),
         byte_buffer: 0u8,
         word_buffer: 0u16,
         address_buffer: 0u16,
       },
-      operations: VecDeque::with_capacity(5),
+      instructions: VecDeque::with_capacity(20),
       registers: Registers::new(),
+    }
+  }
+
+  fn pop_branch_instructions(&mut self) {
+    while let Some(instruction) = self.instructions.pop_front() {
+      if let Instruction::EndBranch = instruction {
+        break;
+      }
+    }
+  }
+
+  fn execute_instruction(&mut self, instruction: Instruction, memory: &mut dyn Memory, interrupt_controller: &mut dyn InterruptController) {
+    match instruction {
+      Instruction::Noop => {}
+      Instruction::Defer => panic!("Defer instructions should never be executed"),
+      Instruction::BranchIfZero => {
+        if !self.registers.read_byte(ByteRegister::F).get_bit(7) {
+          self.pop_branch_instructions();
+        }
+      }
+      Instruction::BranchIfNotZero => {
+        if self.registers.read_byte(ByteRegister::F).get_bit(7) {
+          self.pop_branch_instructions();
+        }
+      }
+      Instruction::BranchIfCarry => {
+        if !self.registers.read_byte(ByteRegister::F).get_bit(4) {
+          self.pop_branch_instructions();
+        }
+      }
+      Instruction::BranchIfNotCarry => {
+        if self.registers.read_byte(ByteRegister::F).get_bit(4) {
+          self.pop_branch_instructions();
+        }
+      }
+      Instruction::EndBranch => {}
+      Instruction::MoveByte(params) => { self.move_byte(params, memory); }
+      Instruction::CastByteToSignedWord(params) => { self.cast_byte_to_signed_word(params, memory); }
+      Instruction::MoveWord(params) => { self.move_word(params); }
+      Instruction::IncrementWord(location) => { self.increment_word(location); }
+      Instruction::DecrementWord(location) => { self.decrement_word(location); }
+      Instruction::AddBytes(params) => { self.add_bytes(params, memory); }
+      Instruction::SubtractBytes(params) => { self.subtract_bytes(params, memory); }
+      Instruction::AndBytes(params) => { self.and_bytes(params, memory); }
+      Instruction::OrBytes(params) => { self.or_bytes(params, memory); }
+      Instruction::XorBytes(params) => { self.xor_bytes(params, memory); }
+      Instruction::OnesComplementByte(params) => { self.ones_complement_byte(params, memory); }
+      Instruction::RotateByteLeft(params) => { self.rotate_byte_left(params, memory); }
+      Instruction::RotateByteLeftThroughCarry(params) => { self.rotate_byte_left_through_carry(params, memory); }
+      Instruction::ShiftByteLeft(params) => { self.shift_byte_left(params, memory); }
+      Instruction::RotateByteRight(params) => { self.rotate_byte_right(params, memory); }
+      Instruction::RotateByteRightThroughCarry(params) => { self.rotate_byte_right_through_carry(params, memory); }
+      Instruction::ShiftByteRight(params) => { self.shift_byte_right(params, memory); }
+      Instruction::SwapByte(params) => { self.swap_byte(params, memory); }
+      Instruction::AddWords(params) => { self.add_words(params); }
+      Instruction::DecimalAdjust => { self.decimal_adjust_reg_a(memory); }
+      Instruction::GetBitFromByte(location, bit_number) => { self.get_bit_from_byte(location, bit_number, memory); }
+      Instruction::SetBitOnByte(params, bit_number) => { self.set_bit_on_byte(params, bit_number, memory); }
+      Instruction::ResetBitOnByte(params, bit_number) => { self.reset_bit_on_byte(params, bit_number, memory); }
+      Instruction::ClearInterrupt(interrupt) => { interrupt_controller.clear_interrupt(interrupt); }
+      Instruction::EnableInterrupts => { interrupt_controller.enable_interrupts(); }
+      Instruction::DisableInterrupts => { interrupt_controller.disable_interrupts(); }
+      Instruction::FlipCarry => { self.flip_carry_flag(); }
+      Instruction::SetCarry => { self.set_carry_flag(); }
+      Instruction::Halt => { self.halt(); }
+      Instruction::Stop => { self.stop(); }
+      Instruction::DecodeCBInstruction => {
+        let opcode = Opcode(self.read_next_byte(memory));
+        InstructionDecoder::decode_cb(self, opcode);
+      }
+    }
+  }
+
+  fn execute_machine_cyle(&mut self, memory: &mut dyn Memory, interrupt_controller: &mut dyn InterruptController) {
+    while let Some(instruction) = self.instructions.pop_front() {
+      if let Instruction::Defer = instruction {
+        return;
+      }
+      self.execute_instruction(instruction, memory, interrupt_controller);
     }
   }
 
@@ -108,285 +164,15 @@ impl CPUImpl {
     }
   }
 
-  fn tick(&mut self, memory: &mut dyn Memory, interrupt_controller: &mut dyn InterruptController) {
-    if let Some(operation) = self.operations.pop_front() {
-      operation(self, memory);
-    } else if self.enabled {
-      let optional_interrupt = interrupt_controller.get_requested_interrupt();
-      if let Some(interrupt) = optional_interrupt {
-        self.call_interrupt_routine(interrupt, interrupt_controller);
-      } else {
-        self.fetch_and_execute_instruction(memory, interrupt_controller);
-      }
-    }
-  }
-
-  fn fetch_and_execute_instruction(&mut self, memory: &mut dyn Memory, interrupt_controller: &mut dyn InterruptController) {
-    let opcode_value = self.read_next_byte(memory);
-    self.context.opcode = Opcode(opcode_value);
-    match opcode_value {
-      0x00 => {}
-      0x01 => self.immediate_to_reg_pair_ld(),
-      0x02 => self.reg_a_to_indirect_bc_ld(),
-      0x03 => self.increment_reg_pair(memory),
-      0x04 => self.increment_reg(memory),
-      0x05 => self.decrement_reg(memory),
-      0x06 => self.immediate_to_reg_ld(),
-      0x07 => self.rotate_reg_a_left(memory),
-      0x08 => self.reg_sp_to_immediate_indirect_ld(),
-      0x09 => self.add_reg_pair_to_reg_hl(memory),
-      0x0A => self.indirect_bc_to_reg_a_ld(),
-      0x0B => self.decrement_reg_pair(memory),
-      0x0C => self.increment_reg(memory),
-      0x0D => self.decrement_reg(memory),
-      0x0E => self.immediate_to_reg_ld(),
-      0x0F => self.rotate_reg_a_right(memory),
-      0x10 => self.stop(),
-      0x11 => self.immediate_to_reg_pair_ld(),
-      0x12 => self.reg_a_to_indirect_de_ld(),
-      0x13 => self.increment_reg_pair(memory),
-      0x14 => self.increment_reg(memory),
-      0x15 => self.decrement_reg(memory),
-      0x16 => self.immediate_to_reg_ld(),
-      0x17 => self.rotate_reg_a_left_through_carry(memory),
-      0x18 => self.jump_relative(),
-      0x19 => self.add_reg_pair_to_reg_hl(memory),
-      0x1A => self.indirect_de_to_reg_a_ld(),
-      0x1B => self.decrement_reg_pair(memory),
-      0x1C => self.increment_reg(memory),
-      0x1D => self.decrement_reg(memory),
-      0x1E => self.immediate_to_reg_ld(),
-      0x1F => self.rotate_reg_a_right_through_carry(memory),
-      0x20 => self.jump_conditional_relative(),
-      0x21 => self.immediate_to_reg_pair_ld(),
-      0x22 => self.reg_a_to_indirect_hl_ld_and_increment(),
-      0x23 => self.increment_reg_pair(memory),
-      0x24 => self.increment_reg(memory),
-      0x25 => self.decrement_reg(memory),
-      0x26 => self.immediate_to_reg_ld(),
-      0x27 => self.decimal_adjust_reg_a(memory),
-      0x28 => self.jump_conditional_relative(),
-      0x29 => self.add_reg_pair_to_reg_hl(memory),
-      0x2A => self.indirect_hl_to_reg_a_ld_and_increment(),
-      0x2B => self.decrement_reg_pair(memory),
-      0x2C => self.increment_reg(memory),
-      0x2D => self.decrement_reg(memory),
-      0x2E => self.immediate_to_reg_ld(),
-      0x2F => self.ones_complement_reg_a(),
-      0x30 => self.jump_conditional_relative(),
-      0x31 => self.immediate_to_reg_pair_ld(),
-      0x32 => self.reg_a_to_indirect_hl_ld_and_decrement(),
-      0x33 => self.increment_reg_pair(memory),
-      0x34 => self.increment_indirect_hl(),
-      0x35 => self.decrement_indirect_hl(),
-      0x36 => self.immediate_to_indirect_ld(),
-      0x37 => self.set_carry_flag(),
-      0x38 => self.jump_conditional_relative(),
-      0x39 => self.add_reg_pair_to_reg_hl(memory),
-      0x3A => self.indirect_hl_to_reg_a_ld_and_decrement(),
-      0x3B => self.decrement_reg_pair(memory),
-      0x3C => self.increment_reg(memory),
-      0x3D => self.decrement_reg(memory),
-      0x3E => self.immediate_to_reg_ld(),
-      0x3F => self.flip_carry_flag(),
-      0x40..=0x45 => self.reg_to_reg_ld(memory),
-      0x46 => self.indirect_to_reg_ld(),
-      0x47..=0x4D => self.reg_to_reg_ld(memory),
-      0x4E => self.indirect_to_reg_ld(),
-      0x4F => self.reg_to_reg_ld(memory),
-      0x50..=0x55 => self.reg_to_reg_ld(memory),
-      0x56 => self.indirect_to_reg_ld(),
-      0x57..=0x5D => self.reg_to_reg_ld(memory),
-      0x5E => self.indirect_to_reg_ld(),
-      0x5F => self.reg_to_reg_ld(memory),
-      0x60..=0x65 => self.reg_to_reg_ld(memory),
-      0x66 => self.indirect_to_reg_ld(),
-      0x67..=0x6D => self.reg_to_reg_ld(memory),
-      0x6E => self.indirect_to_reg_ld(),
-      0x6F => self.reg_to_reg_ld(memory),
-      0x70..=0x75 => self.reg_to_indirect_ld(),
-      0x76 => self.halt(),
-      0x77 => self.reg_to_indirect_ld(),
-      0x78..=0x7D => self.reg_to_reg_ld(memory),
-      0x7E => self.indirect_to_reg_ld(),
-      0x7F => self.reg_to_reg_ld(memory),
-      0x80..=0x85 => self.add_reg_to_reg_a_and_write_to_reg_a(memory, false),
-      0x86 => self.add_indirect_hl_to_reg_a_and_write_to_reg_a(false),
-      0x87 => self.add_reg_to_reg_a_and_write_to_reg_a(memory, false),
-      0x88..=0x8D => self.add_reg_to_reg_a_and_write_to_reg_a(memory, true),
-      0x8E => self.add_indirect_hl_to_reg_a_and_write_to_reg_a(true),
-      0x8F => self.add_reg_to_reg_a_and_write_to_reg_a(memory, true),
-      0x90..=0x95 => self.subtract_reg_from_reg_a_and_write_to_reg_a(memory, false),
-      0x96 => self.subtract_indirect_hl_from_reg_a_and_write_to_reg_a(false),
-      0x97 => self.subtract_reg_from_reg_a_and_write_to_reg_a(memory, false),
-      0x98..=0x9D => self.subtract_reg_from_reg_a_and_write_to_reg_a(memory, true),
-      0x9E => self.subtract_indirect_hl_from_reg_a_and_write_to_reg_a(true),
-      0x9F => self.subtract_reg_from_reg_a_and_write_to_reg_a(memory, true),
-      0xA0..=0xA5 => self.and_reg_with_reg_a_and_write_to_reg_a(memory),
-      0xA6 => self.and_indirect_hl_with_reg_a_and_write_to_reg_a(),
-      0xA7 => self.and_reg_with_reg_a_and_write_to_reg_a(memory),
-      0xA8..=0xAD => self.xor_reg_with_reg_a_and_write_to_reg_a(memory),
-      0xAE => self.xor_indirect_hl_with_reg_a_and_write_to_reg_a(),
-      0xAF => self.xor_reg_with_reg_a_and_write_to_reg_a(memory),
-      0xB0..=0xB5 => self.or_reg_with_reg_a_and_write_to_reg_a(memory),
-      0xB6 => self.or_indirect_hl_with_reg_a_and_write_to_reg_a(),
-      0xB7 => self.or_reg_with_reg_a_and_write_to_reg_a(memory),
-      0xB8..=0xBD => self.compare_reg_with_reg_a(memory),
-      0xBE => self.compare_indirect_hl_with_reg_a(),
-      0xBF => self.compare_reg_with_reg_a(memory),
-      0xC0 => self.return_conditionally(),
-      0xC1 => self.pop_stack_to_reg_pair(),
-      0xC2 => self.jump_conditional(),
-      0xC3 => self.jump(),
-      0xC4 => self.call_conditional(),
-      0xC5 => self.push_reg_pair_to_stack(),
-      0xC6 => self.add_immediate_to_reg_a_and_write_to_reg_a(false),
-      0xC7 => self.restart(),
-      0xC8 => self.return_conditionally(),
-      0xC9 => self.return_from_call(),
-      0xCA => self.jump_conditional(),
-      0xCB => self.execute_cb(),
-      0xCC => self.call_conditional(),
-      0xCD => self.call(),
-      0xCE => self.add_immediate_to_reg_a_and_write_to_reg_a(true),
-      0xCF => self.restart(),
-      0xD0 => self.return_conditionally(),
-      0xD1 => self.pop_stack_to_reg_pair(),
-      0xD2 => self.jump_conditional(),
-      0xD4 => self.call_conditional(),
-      0xD5 => self.push_reg_pair_to_stack(),
-      0xD6 => self.subtract_immediate_from_reg_a_and_write_to_reg_a(false),
-      0xD7 => self.restart(),
-      0xD8 => self.return_conditionally(),
-      0xD9 => self.return_from_interrupt(interrupt_controller),
-      0xDA => self.jump_conditional(),
-      0xDC => self.call_conditional(),
-      0xDE => self.subtract_immediate_from_reg_a_and_write_to_reg_a(true),
-      0xDF => self.restart(),
-      0xE0 => self.reg_a_to_immediate_indirect_with_offset_ld(),
-      0xE1 => self.pop_stack_to_reg_pair(),
-      0xE2 => self.reg_a_to_indirect_c_ld(memory),
-      0xE5 => self.push_reg_pair_to_stack(),
-      0xE6 => self.and_immediate_with_reg_a_and_write_to_reg_a(),
-      0xE7 => self.restart(),
-      0xE8 => self.add_immediate_to_reg_sp(),
-      0xE9 => self.jump_to_indirect_hl(memory),
-      0xEA => self.reg_a_to_immediate_indirect_ld(),
-      0xEE => self.xor_immediate_with_reg_a_and_write_to_reg_a(),
-      0xEF => self.restart(),
-      0xF0 => self.immediate_indirect_with_offset_to_reg_a_ld(),
-      0xF1 => self.pop_stack_to_reg_pair(),
-      0xF2 => self.indirect_c_with_offset_to_reg_a_ld(memory),
-      0xF3 => self.disable_interrupts(interrupt_controller),
-      0xF5 => self.push_reg_pair_to_stack(),
-      0xF6 => self.or_immediate_with_reg_a_and_write_to_reg_a(),
-      0xF7 => self.restart(),
-      0xF8 => self.reg_sp_plus_signed_immediate_to_hl_ld(memory),
-      0xF9 => self.reg_hl_to_reg_sp_ld(memory),
-      0xFA => self.immediate_indirect_to_reg_a_ld(),
-      0xFB => self.enable_interrupts(interrupt_controller),
-      0xFE => self.compare_immediate_with_reg_a(),
-      0xFF => self.restart(),
-      _ => panic!("Unknown opcode"),
-    };
-  }
-
-  fn execute_cb(&mut self) {
-    self.operations.push_back(Box::new(|this, memory| {
-      let opcode_value = this.read_next_byte(memory);
-      this.context.opcode = Opcode(opcode_value);
-      match opcode_value {
-        0x00..=0x05 => this.rotate_reg_left(memory),
-        0x06 => this.rotate_indirect_hl_left(),
-        0x07 => this.rotate_reg_left(memory),
-        0x08..=0x0D => this.rotate_reg_right(memory),
-        0x0E => this.rotate_indirect_hl_right(),
-        0x0F => this.rotate_reg_right(memory),
-        0x10..=0x15 => this.rotate_reg_left_through_carry(memory),
-        0x16 => this.rotate_indirect_hl_left_through_carry(),
-        0x17 => this.rotate_reg_left_through_carry(memory),
-        0x18..=0x1D => this.rotate_reg_right_through_carry(memory),
-        0x1E => this.rotate_indirect_hl_right_through_carry(),
-        0x1F => this.rotate_reg_right_through_carry(memory),
-        0x20..=0x25 => this.shift_reg_left(memory),
-        0x26 => this.shift_indirect_hl_left(),
-        0x27 => this.shift_reg_left(memory),
-        0x28..=0x2D => this.shift_reg_right_arithmetic(memory),
-        0x2E => this.shift_indirect_hl_right_arithmetic(),
-        0x2F => this.shift_reg_right_arithmetic(memory),
-        0x30..=0x35 => this.swap_reg(memory),
-        0x36 => this.swap_indirect_hl(),
-        0x37 => this.swap_reg(memory),
-        0x38..=0x3D => this.shift_reg_right(memory),
-        0x3E => this.shift_indirect_hl_right(),
-        0x3F => this.shift_reg_right(memory),
-        0x40..=0x45 => this.get_reg_bit(),
-        0x46 => this.get_indirect_hl_bit(),
-        0x47..=0x4D => this.get_reg_bit(),
-        0x4E => this.get_indirect_hl_bit(),
-        0x4F..=0x55 => this.get_reg_bit(),
-        0x56 => this.get_indirect_hl_bit(),
-        0x57..=0x5D => this.get_reg_bit(),
-        0x5E => this.get_indirect_hl_bit(),
-        0x5F..=0x65 => this.get_reg_bit(),
-        0x66 => this.get_indirect_hl_bit(),
-        0x67..=0x6D => this.get_reg_bit(),
-        0x6E => this.get_indirect_hl_bit(),
-        0x6F..=0x75 => this.get_reg_bit(),
-        0x76 => this.get_indirect_hl_bit(),
-        0x77..=0x7D => this.get_reg_bit(),
-        0x7E => this.get_indirect_hl_bit(),
-        0x7F => this.get_reg_bit(),
-        0x80..=0x85 => this.reset_reg_bit(),
-        0x86 => this.reset_indirect_hl_bit(),
-        0x87..=0x8D => this.reset_reg_bit(),
-        0x8E => this.reset_indirect_hl_bit(),
-        0x8F..=0x95 => this.reset_reg_bit(),
-        0x96 => this.reset_indirect_hl_bit(),
-        0x97..=0x9D => this.reset_reg_bit(),
-        0x9E => this.reset_indirect_hl_bit(),
-        0x9F..=0xA5 => this.reset_reg_bit(),
-        0xA6 => this.reset_indirect_hl_bit(),
-        0xA7..=0xAD => this.reset_reg_bit(),
-        0xAE => this.reset_indirect_hl_bit(),
-        0xAF..=0xB5 => this.reset_reg_bit(),
-        0xB6 => this.reset_indirect_hl_bit(),
-        0xB7..=0xBD => this.reset_reg_bit(),
-        0xBE => this.reset_indirect_hl_bit(),
-        0xBF => this.reset_reg_bit(),
-        0xC0..=0xC5 => this.set_reg_bit(),
-        0xC6 => this.set_indirect_hl_bit(),
-        0xC7..=0xCD => this.set_reg_bit(),
-        0xCE => this.set_indirect_hl_bit(),
-        0xCF..=0xD5 => this.set_reg_bit(),
-        0xD6 => this.set_indirect_hl_bit(),
-        0xD7..=0xDD => this.set_reg_bit(),
-        0xDE => this.set_indirect_hl_bit(),
-        0xDF..=0xE5 => this.set_reg_bit(),
-        0xE6 => this.set_indirect_hl_bit(),
-        0xE7..=0xED => this.set_reg_bit(),
-        0xEE => this.set_indirect_hl_bit(),
-        0xEF..=0xF5 => this.set_reg_bit(),
-        0xF6 => this.set_indirect_hl_bit(),
-        0xF7..=0xFD => this.set_reg_bit(),
-        0xFE => this.set_indirect_hl_bit(),
-        0xFF => this.set_reg_bit(),
-        _ => panic!("Unknown opcode"),
-      };
-    }));
+  fn decode_instruction(&mut self, memory: &mut dyn Memory) {
+    let opcode = Opcode(self.read_next_byte(memory));
+    InstructionDecoder::decode(self, opcode);
   }
 
   fn read_next_byte(&mut self, memory: &dyn Memory) -> u8 {
     let address = self.registers.read_word(WordRegister::PC);
     self.registers.write_word(WordRegister::PC, address + 1);
     memory.read(address)
-  }
-
-  fn combine_operations(operation1: Operation, operation2: Operation) -> Operation {
-    Box::new(|this, memory| {
-      operation1(this, memory);
-      operation2(this, memory);
-    })
   }
 
   fn read_byte(&mut self, memory: &dyn Memory, location: ByteLocation) -> u8 {
@@ -437,1489 +223,205 @@ impl CPUImpl {
     }
   }
 
-  fn noop() -> Operation {
-    Box::new(|_this, _memory| {})
+  fn move_byte(&mut self, params: ByteOperationParams, memory: &mut dyn Memory) {
+    let byte = self.read_byte(memory, params.source);
+    self.write_byte(memory, params.destination, byte);
   }
 
-  fn move_byte(source: ByteLocation, destination: ByteLocation) -> Operation {
-    Box::new(move |this, memory| {
-      let byte = this.read_byte(memory, source);
-      this.write_byte(memory, destination, byte);
-    })
+  fn move_word(&mut self, params: WordOperationParams) {
+    let word = self.read_word(params.source);
+    self.write_word(params.destination, word);
   }
 
-  fn move_word(source: WordLocation, destination: WordLocation) -> Operation {
-    Box::new(move |this, _memory| {
-      let word = this.read_word(source);
-      this.write_word(destination, word);
-    })
+  fn cast_byte_to_signed_word(&mut self, params: ByteCastingParams, memory: &mut dyn Memory) {
+    let signed_word = self.read_byte(memory, params.source) as i8 as u16;
+    self.write_word(params.destination, signed_word)
   }
 
-  fn add_bytes(params: ByteArithmeticParams) -> Operation {
-    Box::new(move |this, memory| {
-      let first_value = this.read_byte(memory, params.first) as u16;
-      let second_value = this.read_byte(memory, params.second) as u16;
-      let carry = if params.use_carry { this.registers.read_byte(ByteRegister::F).get_bit(4) as u16 } else { 0u16 };
-      let result = first_value + second_value + carry;
-      let carry_result = first_value ^ second_value ^ result;
-      let truncated_result = result as u8;
-      let zero = truncated_result == 0;
-      if params.flag_mask != 0 {
-        let flag =
-          ((zero as u8) << 7) |
-            ((carry_result.get_bit(4) as u8) << 5) |
-            ((carry_result.get_bit(8) as u8) << 4);
-        this.registers.write_byte_masked(ByteRegister::F, flag, params.flag_mask);
-      }
-      this.write_byte(memory, params.destination, truncated_result);
-    })
-  }
-
-  fn add_words(params: WordArithmeticParams) -> Operation {
-    Box::new(move |this, _memory| {
-      let first_value = this.read_word(params.first);
-      let second_value = this.read_word(params.second);
-      let le_bytes1 = first_value.to_le_bytes();
-      let le_bytes2 = second_value.to_le_bytes();
-      let (result1, carry1) = le_bytes1[0].overflowing_add(le_bytes2[0]);
-      let result2 = (le_bytes1[1] as u16) + (le_bytes2[1] as u16) + (carry1 as u16);
-      let carry_result2 = (le_bytes1[1] as u16) ^ (le_bytes2[1] as u16) ^ result2;
-      let result = (&[result1, result2 as u8][..]).read_u16::<LittleEndian>().unwrap();
-      let zero = result == 0;
-      if params.flag_mask != 0 {
-        let flag =
-          ((zero as u8) << 7) |
-            ((carry_result2.get_bit(4) as u8) << 5) |
-            ((carry_result2.get_bit(8) as u8) << 4);
-        this.registers.write_byte_masked(ByteRegister::F, flag, params.flag_mask);
-      }
-      this.write_word(params.destination, result);
-    })
-  }
-
-  fn subtract_bytes(params: ByteArithmeticParams) -> Operation {
-    Box::new(move |this, memory| {
-      let first_value = this.read_byte(memory, params.first);
-      let second_value = this.read_byte(memory, params.second);
-      let borrow = if params.use_carry { this.registers.read_byte(ByteRegister::F).get_bit(4) as u16 } else { 0u16 };
-      let result = 0x100u16 + (first_value as u16) - (second_value as u16) - borrow;
-      let borrow_result = (0x100u16 + first_value as u16) ^ (second_value as u16) ^ result;
-      let truncated_result = result as u8;
-      let zero = truncated_result == 0;
-      if params.flag_mask != 0 {
-        let flag =
-          ((zero as u8) << 7) |
-            (1u8 << 6) |
-            ((borrow_result.get_bit(4) as u8) << 5) |
-            ((borrow_result.get_bit(8) as u8) << 4);
-        this.registers.write_byte_masked(ByteRegister::F, flag, params.flag_mask);
-      }
-      this.write_byte(memory, params.destination, truncated_result);
-    })
-  }
-
-  fn and_bytes(first: ByteLocation, second: ByteLocation, destination: ByteLocation) -> Operation {
-    Box::new(move |this, memory| {
-      let first_value = this.read_byte(memory, first);
-      let second_value = this.read_byte(memory, second);
-      let result = first_value & second_value;
-      let zero = result == 0;
-      let flag = ((zero as u8) << 7) | (1u8 << 5);
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn or_bytes(first: ByteLocation, second: ByteLocation, destination: ByteLocation) -> Operation {
-    Box::new(move |this, memory| {
-      let first_value = this.read_byte(memory, first);
-      let second_value = this.read_byte(memory, second);
-      let result = first_value | second_value;
-      let flag = if result == 0 { 0x80u8 } else { 0x00u8 };
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn xor_bytes(first: ByteLocation, second: ByteLocation, destination: ByteLocation) -> Operation {
-    Box::new(move |this, memory| {
-      let first_value = this.read_byte(memory, first);
-      let second_value = this.read_byte(memory, second);
-      let result = first_value ^ second_value;
-      let flag = if result == 0 { 0x80u8 } else { 0x00u8 };
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn rotate_byte_left(source: ByteLocation, destination: ByteLocation, unset_zero: bool) -> Operation {
-    Box::new(move |this, memory| {
-      let value = this.read_byte(memory, source);
-      let result = value.rotate_left(1);
-      let zero = !unset_zero && result == 0;
+  fn add_bytes(&mut self, params: ByteArithmeticParams, memory: &mut dyn Memory) {
+    let first_value = self.read_byte(memory, params.first) as u16;
+    let second_value = self.read_byte(memory, params.second) as u16;
+    let carry = if params.use_carry { self.registers.read_byte(ByteRegister::F).get_bit(4) as u16 } else { 0u16 };
+    let result = first_value + second_value + carry;
+    let carry_result = first_value ^ second_value ^ result;
+    let truncated_result = result as u8;
+    let zero = truncated_result == 0;
+    if params.flag_mask != 0 {
       let flag =
-        ((zero as u8) << 7) | ((value.get_bit(7) as u8) << 4);
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn rotate_byte_left_through_carry(source: ByteLocation, destination: ByteLocation, unset_zero: bool) -> Operation {
-    Box::new(move |this, memory| {
-      let value = this.read_byte(memory, source);
-      let carry = this.registers.read_byte(ByteRegister::F).get_bit(4);
-      let result = (value << 1) | (carry as u8);
-      let zero = !unset_zero && result == 0;
-      let flag =
-        ((zero as u8) << 7) | ((value.get_bit(7) as u8) << 4);
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn rotate_byte_right(source: ByteLocation, destination: ByteLocation, unset_zero: bool) -> Operation {
-    Box::new(move |this, memory| {
-      let value = this.read_byte(memory, source);
-      let result = value.rotate_right(1);
-      let zero = !unset_zero && result == 0;
-      let flag =
-        ((zero as u8) << 7) | ((value.get_bit(0) as u8) << 4);
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn rotate_byte_right_through_carry(source: ByteLocation, destination: ByteLocation, unset_zero: bool) -> Operation {
-    Box::new(move |this, memory| {
-      let value = this.read_byte(memory, source);
-      let carry = this.registers.read_byte(ByteRegister::F).get_bit(4);
-      let result = (value >> 1) | (if carry { 0x80u8 } else { 0x00u8 });
-      let zero = !unset_zero && result == 0;
-      let flag =
-        ((zero as u8) << 7) | ((value.get_bit(0) as u8) << 4);
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn shift_byte_left(source: ByteLocation, destination: ByteLocation) -> Operation {
-    Box::new(move |this, memory| {
-      let value = this.read_byte(memory, source);
-      let result = value << 1;
-      let zero = result == 0;
-      let flag =
-        ((zero as u8) << 7) | ((value.get_bit(7) as u8) << 4);
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn shift_byte_right(source: ByteLocation, destination: ByteLocation) -> Operation {
-    Box::new(move |this, memory| {
-      let value = this.read_byte(memory, source);
-      let result = value >> 1;
-      let zero = result == 0;
-      let flag =
-        ((zero as u8) << 7) | ((value.get_bit(0) as u8) << 4);
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn shift_byte_right_arithmetic(source: ByteLocation, destination: ByteLocation) -> Operation {
-    Box::new(move |this, memory| {
-      let value = this.read_byte(memory, source);
-      let result = (value >> 1) | (value & 0x80);
-      let zero = result == 0;
-      let flag =
-        ((zero as u8) << 7) | ((value.get_bit(0) as u8) << 4);
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn swap_byte(source: ByteLocation, destination: ByteLocation) -> Operation {
-    Box::new(move |this, memory| {
-      let value = this.read_byte(memory, source);
-      let result = value.rotate_left(4);
-      let flag = if result == 0 { 0x80u8 } else { 0x00u8 };
-      this.registers.write_byte(ByteRegister::F, flag);
-      this.write_byte(memory, destination, result);
-    })
-  }
-
-  fn increment_word(location: WordLocation) -> Operation {
-    Box::new(move |this, _memory| {
-      let word = this.read_word(location);
-      this.write_word(location, word.wrapping_add(1));
-    })
-  }
-
-  fn decrement_word(location: WordLocation) -> Operation {
-    Box::new(move |this, _memory| {
-      let word = this.read_word(location);
-      this.write_word(location, word.wrapping_sub(1));
-    })
-  }
-
-  fn reg_to_reg_ld(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::move_byte(
-      ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.z_bits())),
-      ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.y_bits())),
-    )(self, memory);
-  }
-
-  fn immediate_to_reg_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.y_bits())),
-      )
-    );
-  }
-
-  fn immediate_to_indirect_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::ByteBuffer,
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-      )
-    );
-  }
-
-  fn indirect_to_reg_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.y_bits())),
-      )
-    );
-  }
-
-  fn reg_to_indirect_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.z_bits())),
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-      )
-    );
-  }
-
-  fn indirect_bc_to_reg_a_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::BC),
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn indirect_de_to_reg_a_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::DE),
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn indirect_c_with_offset_to_reg_a_ld(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::move_byte(ByteLocation::Value(0xFF), ByteLocation::UpperAddressBuffer)(self, memory);
-    CPUImpl::move_byte(ByteLocation::Register(ByteRegister::C), ByteLocation::LowerAddressBuffer)(self, memory);
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByAddressBuffer,
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn reg_a_to_indirect_c_ld(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::move_byte(ByteLocation::Value(0xFF), ByteLocation::UpperAddressBuffer)(self, memory);
-    CPUImpl::move_byte(ByteLocation::Register(ByteRegister::C), ByteLocation::LowerAddressBuffer)(self, memory);
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::MemoryReferencedByAddressBuffer,
-      )
-    );
-  }
-
-  fn immediate_indirect_with_offset_to_reg_a_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::move_byte(
-          ByteLocation::Value(0xFF),
-          ByteLocation::UpperAddressBuffer,
-        ),
-        CPUImpl::move_byte(
-          ByteLocation::NextMemoryByte,
-          ByteLocation::LowerAddressBuffer,
-        ),
-      ));
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByAddressBuffer,
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn reg_a_to_immediate_indirect_with_offset_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::move_byte(
-          ByteLocation::Value(0xFF),
-          ByteLocation::UpperAddressBuffer,
-        ),
-        CPUImpl::move_byte(
-          ByteLocation::NextMemoryByte,
-          ByteLocation::LowerAddressBuffer,
-        ),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::MemoryReferencedByAddressBuffer,
-      )
-    );
-  }
-
-  fn immediate_indirect_to_reg_a_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::LowerAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::UpperAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByAddressBuffer,
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn reg_a_to_immediate_indirect_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::LowerAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::UpperAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::MemoryReferencedByAddressBuffer,
-      )
-    );
-  }
-
-  fn indirect_hl_to_reg_a_ld_and_increment(&mut self) {
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::move_byte(
-          ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-          ByteLocation::Register(ByteRegister::A),
-        ),
-        CPUImpl::increment_word(WordLocation::Register(WordRegister::HL)),
-      )
-    );
-  }
-
-  fn indirect_hl_to_reg_a_ld_and_decrement(&mut self) {
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::move_byte(
-          ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-          ByteLocation::Register(ByteRegister::A),
-        ),
-        CPUImpl::decrement_word(WordLocation::Register(WordRegister::HL)),
-      )
-    );
-  }
-
-  fn reg_a_to_indirect_bc_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::MemoryReferencedByRegister(WordRegister::BC),
-      )
-    );
-  }
-
-  fn reg_a_to_indirect_de_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::MemoryReferencedByRegister(WordRegister::DE),
-      )
-    );
-  }
-
-  fn reg_a_to_indirect_hl_ld_and_increment(&mut self) {
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::move_byte(
-          ByteLocation::Register(ByteRegister::A),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ),
-        CPUImpl::increment_word(WordLocation::Register(WordRegister::HL)),
-      )
-    );
-  }
-
-  fn reg_a_to_indirect_hl_ld_and_decrement(&mut self) {
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::move_byte(
-          ByteLocation::Register(ByteRegister::A),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ),
-        CPUImpl::decrement_word(WordLocation::Register(WordRegister::HL)),
-      )
-    );
-  }
-
-  fn immediate_to_reg_pair_ld(&mut self) {
-    let register = WordRegister::from_dd_bits(self.context.opcode.dd_bits());
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::Register(register.get_lower_byte_register()),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::Register(register.get_upper_byte_register()),
-      )
-    );
-  }
-
-  fn reg_hl_to_reg_sp_ld(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::move_byte(
-      ByteLocation::Register(ByteRegister::LowerHL),
-      ByteLocation::Register(ByteRegister::LowerSP),
-    )(self, memory);
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::Register(ByteRegister::UpperHL),
-        ByteLocation::Register(ByteRegister::UpperSP),
-      )
-    );
-  }
-
-  fn push_reg_pair_to_stack(&mut self) {
-    let register = WordRegister::from_qq_bits(self.context.opcode.qq_bits());
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::decrement_word(WordLocation::Register(WordRegister::SP)),
-        CPUImpl::move_byte(
-          ByteLocation::Register(register.get_upper_byte_register()),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-        ),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::decrement_word(WordLocation::Register(WordRegister::SP)),
-        CPUImpl::move_byte(
-          ByteLocation::Register(register.get_lower_byte_register()),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-        ),
-      )
-    );
-    self.operations.push_back(CPUImpl::noop()); // Normally we'd decrement the SP by 2 here, but we've already done this in the previous steps
-  }
-
-  fn pop_stack_to_reg_pair(&mut self) {
-    let register = WordRegister::from_qq_bits(self.context.opcode.qq_bits());
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::move_byte(
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-          ByteLocation::Register(register.get_lower_byte_register()),
-        ),
-        CPUImpl::increment_word(WordLocation::Register(WordRegister::SP)),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::move_byte(
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-          ByteLocation::Register(register.get_upper_byte_register()),
-        ),
-        CPUImpl::increment_word(WordLocation::Register(WordRegister::SP)),
-      )
-    );
-  }
-
-  // TODO: Do a more thorough check to see if this is correct. There seems to be a lot of confusion surrounding the (half) carry bits
-  fn reg_sp_plus_signed_immediate_to_hl_ld(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::move_byte(
-      ByteLocation::Value(0x00),
-      ByteLocation::Register(ByteRegister::F),
-    )(self, memory);
-    self.operations.push_back(Box::new(|this, memory| {
-      this.context.word_buffer = this.read_next_byte(memory) as i8 as u16;
-    }));
-    self.operations.push_back(
-      CPUImpl::add_words(WordArithmeticParams {
-        first: WordLocation::Register(WordRegister::SP),
-        second: WordLocation::WordBuffer,
-        destination: WordLocation::Register(WordRegister::HL),
-        flag_mask: 0x30,
-      })
-    );
-  }
-
-  fn reg_sp_to_immediate_indirect_ld(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::LowerAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::UpperAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::Register(ByteRegister::LowerSP),
-        ByteLocation::MemoryReferencedByAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::increment_word(WordLocation::AddressBuffer),
-        CPUImpl::move_byte(
-          ByteLocation::Register(ByteRegister::UpperSP),
-          ByteLocation::MemoryReferencedByAddressBuffer),
-      ),
-    );
-  }
-
-  fn add_reg_to_reg_a_and_write_to_reg_a(&mut self, memory: &mut dyn Memory, use_carry: bool) {
-    CPUImpl::add_bytes(ByteArithmeticParams {
-      first: ByteLocation::Register(ByteRegister::A),
-      second: ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.z_bits())),
-      destination: ByteLocation::Register(ByteRegister::A),
-      use_carry,
-      flag_mask: 0xF0,
-    })(self, memory);
-  }
-
-  fn add_immediate_to_reg_a_and_write_to_reg_a(&mut self, use_carry: bool) {
-    self.operations.push_back(
-      CPUImpl::add_bytes(ByteArithmeticParams {
-        first: ByteLocation::Register(ByteRegister::A),
-        second: ByteLocation::NextMemoryByte,
-        destination: ByteLocation::Register(ByteRegister::A),
-        use_carry,
-        flag_mask: 0xF0,
-      })
-    );
-  }
-
-  fn add_indirect_hl_to_reg_a_and_write_to_reg_a(&mut self, use_carry: bool) {
-    self.operations.push_back(
-      CPUImpl::add_bytes(ByteArithmeticParams {
-        first: ByteLocation::Register(ByteRegister::A),
-        second: ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        destination: ByteLocation::Register(ByteRegister::A),
-        use_carry,
-        flag_mask: 0xF0,
-      })
-    );
-  }
-
-  fn subtract_reg_from_reg_a_and_write_to_reg_a(&mut self, memory: &mut dyn Memory, use_carry: bool) {
-    CPUImpl::subtract_bytes(ByteArithmeticParams {
-      first: ByteLocation::Register(ByteRegister::A),
-      second: ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.z_bits())),
-      destination: ByteLocation::Register(ByteRegister::A),
-      use_carry,
-      flag_mask: 0xF0,
-    })(self, memory);
-  }
-
-  fn subtract_immediate_from_reg_a_and_write_to_reg_a(&mut self, use_carry: bool) {
-    self.operations.push_back(
-      CPUImpl::subtract_bytes(ByteArithmeticParams {
-        first: ByteLocation::Register(ByteRegister::A),
-        second: ByteLocation::NextMemoryByte,
-        destination: ByteLocation::Register(ByteRegister::A),
-        use_carry,
-        flag_mask: 0xF0,
-      })
-    );
-  }
-
-  fn subtract_indirect_hl_from_reg_a_and_write_to_reg_a(&mut self, use_carry: bool) {
-    self.operations.push_back(
-      CPUImpl::subtract_bytes(ByteArithmeticParams {
-        first: ByteLocation::Register(ByteRegister::A),
-        second: ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        destination: ByteLocation::Register(ByteRegister::A),
-        use_carry,
-        flag_mask: 0xF0,
-      })
-    );
-  }
-
-  fn and_reg_with_reg_a_and_write_to_reg_a(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::and_bytes(
-      ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.z_bits())),
-      ByteLocation::Register(ByteRegister::A),
-      ByteLocation::Register(ByteRegister::A),
-    )(self, memory);
-  }
-
-  fn and_immediate_with_reg_a_and_write_to_reg_a(&mut self) {
-    self.operations.push_back(
-      CPUImpl::and_bytes(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn and_indirect_hl_with_reg_a_and_write_to_reg_a(&mut self) {
-    self.operations.push_back(
-      CPUImpl::and_bytes(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn or_reg_with_reg_a_and_write_to_reg_a(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::or_bytes(
-      ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.z_bits())),
-      ByteLocation::Register(ByteRegister::A),
-      ByteLocation::Register(ByteRegister::A),
-    )(self, memory);
-  }
-
-  fn or_immediate_with_reg_a_and_write_to_reg_a(&mut self) {
-    self.operations.push_back(
-      CPUImpl::or_bytes(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn or_indirect_hl_with_reg_a_and_write_to_reg_a(&mut self) {
-    self.operations.push_back(
-      CPUImpl::or_bytes(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn xor_reg_with_reg_a_and_write_to_reg_a(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::xor_bytes(
-      ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.z_bits())),
-      ByteLocation::Register(ByteRegister::A),
-      ByteLocation::Register(ByteRegister::A),
-    )(self, memory);
-  }
-
-  fn xor_immediate_with_reg_a_and_write_to_reg_a(&mut self) {
-    self.operations.push_back(
-      CPUImpl::xor_bytes(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn xor_indirect_hl_with_reg_a_and_write_to_reg_a(&mut self) {
-    self.operations.push_back(
-      CPUImpl::xor_bytes(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::Register(ByteRegister::A),
-        ByteLocation::Register(ByteRegister::A),
-      )
-    );
-  }
-
-  fn compare_reg_with_reg_a(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::subtract_bytes(ByteArithmeticParams {
-      first: ByteLocation::Register(ByteRegister::A),
-      second: ByteLocation::Register(ByteRegister::from_r_bits(self.context.opcode.z_bits())),
-      destination: ByteLocation::ByteBuffer,
-      use_carry: false,
-      flag_mask: 0xF0,
-    })(self, memory);
-  }
-
-  fn compare_immediate_with_reg_a(&mut self) {
-    self.operations.push_back(
-      CPUImpl::subtract_bytes(ByteArithmeticParams {
-        first: ByteLocation::Register(ByteRegister::A),
-        second: ByteLocation::NextMemoryByte,
-        destination: ByteLocation::ByteBuffer,
-        use_carry: false,
-        flag_mask: 0xF0,
-      })
-    );
-  }
-
-  fn compare_indirect_hl_with_reg_a(&mut self) {
-    self.operations.push_back(
-      CPUImpl::subtract_bytes(ByteArithmeticParams {
-        first: ByteLocation::Register(ByteRegister::A),
-        second: ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        destination: ByteLocation::ByteBuffer,
-        use_carry: false,
-        flag_mask: 0xF0,
-      })
-    );
-  }
-
-  fn increment_reg(&mut self, memory: &mut dyn Memory) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.y_bits());
-    CPUImpl::add_bytes(ByteArithmeticParams {
-      first: ByteLocation::Register(register),
-      second: ByteLocation::Value(1),
-      destination: ByteLocation::Register(register),
-      use_carry: false,
-      flag_mask: 0xE0,
-    })(self, memory);
-  }
-
-  fn increment_indirect_hl(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::add_bytes(ByteArithmeticParams {
-        first: ByteLocation::ByteBuffer,
-        second: ByteLocation::Value(1),
-        destination: ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        use_carry: false,
-        flag_mask: 0xE0,
-      })
-    );
-  }
-
-  fn decrement_reg(&mut self, memory: &mut dyn Memory) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.y_bits());
-    CPUImpl::subtract_bytes(ByteArithmeticParams {
-      first: ByteLocation::Register(register),
-      second: ByteLocation::Value(1),
-      destination: ByteLocation::Register(register),
-      use_carry: false,
-      flag_mask: 0xE0,
-    })(self, memory);
-  }
-
-  fn decrement_indirect_hl(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::subtract_bytes(ByteArithmeticParams {
-        first: ByteLocation::ByteBuffer,
-        second: ByteLocation::Value(1),
-        destination: ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        use_carry: false,
-        flag_mask: 0xE0,
-      })
-    );
-  }
-
-  fn add_reg_pair_to_reg_hl(&mut self, memory: &mut dyn Memory) {
-    let register = WordRegister::from_dd_bits(self.context.opcode.dd_bits());
-    CPUImpl::add_words(WordArithmeticParams {
-      first: WordLocation::Register(register),
-      second: WordLocation::Register(WordRegister::HL),
-      destination: WordLocation::WordBuffer,
-      flag_mask: 0x70,
-    })(self, memory);
-    CPUImpl::move_byte(
-      ByteLocation::LowerWordBuffer,
-      ByteLocation::Register(ByteRegister::LowerHL),
-    )(self, memory);
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::UpperWordBuffer,
-        ByteLocation::Register(ByteRegister::UpperHL),
-      )
-    );
-  }
-
-  //TODO: Check whether the flags are set correctly
-  fn add_immediate_to_reg_sp(&mut self) {
-    self.operations.push_back(Box::new(|this, memory| {
-      this.context.word_buffer = this.read_next_byte(memory) as i8 as u16;
-    }));
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::add_words(WordArithmeticParams {
-          first: WordLocation::Register(WordRegister::SP),
-          second: WordLocation::WordBuffer,
-          destination: WordLocation::WordBuffer,
-          flag_mask: 0x30,
-        }),
-        CPUImpl::move_byte(
-          ByteLocation::LowerWordBuffer,
-          ByteLocation::Register(ByteRegister::LowerSP),
-        ),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::UpperWordBuffer,
-        ByteLocation::Register(ByteRegister::UpperSP),
-      )
-    );
-  }
-
-  fn increment_reg_pair(&mut self, memory: &mut dyn Memory) {
-    let register = WordRegister::from_dd_bits(self.context.opcode.dd_bits());
-    CPUImpl::move_word(
-      WordLocation::Register(register),
-      WordLocation::WordBuffer,
-    )(self, memory);
-    CPUImpl::increment_word(WordLocation::WordBuffer)(self, memory);
-    CPUImpl::move_byte(
-      ByteLocation::LowerWordBuffer,
-      ByteLocation::Register(register.get_lower_byte_register()),
-    )(self, memory);
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::UpperWordBuffer,
-        ByteLocation::Register(register.get_upper_byte_register()),
-      )
-    );
-  }
-
-  fn decrement_reg_pair(&mut self, memory: &mut dyn Memory) {
-    let register = WordRegister::from_dd_bits(self.context.opcode.dd_bits());
-    CPUImpl::move_word(
-      WordLocation::Register(register),
-      WordLocation::WordBuffer,
-    )(self, memory);
-    CPUImpl::decrement_word(WordLocation::WordBuffer)(self, memory);
-    CPUImpl::move_byte(
-      ByteLocation::LowerWordBuffer,
-      ByteLocation::Register(register.get_lower_byte_register()),
-    )(self, memory);
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::UpperWordBuffer,
-        ByteLocation::Register(register.get_upper_byte_register()),
-      )
-    );
-  }
-
-  fn rotate_reg_a_left(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::rotate_byte_left(
-      ByteLocation::Register(ByteRegister::A),
-      ByteLocation::Register(ByteRegister::A),
-      true,
-    )(self, memory);
-  }
-
-  fn rotate_reg_left(&mut self, memory: &mut dyn Memory) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.z_bits());
-    CPUImpl::rotate_byte_left(
-      ByteLocation::Register(register),
-      ByteLocation::Register(register),
-      false,
-    )(self, memory);
-  }
-
-  fn rotate_indirect_hl_left(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::rotate_byte_left(
-        ByteLocation::ByteBuffer,
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        false,
-      )
-    );
-  }
-
-  fn rotate_reg_a_left_through_carry(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::rotate_byte_left_through_carry(
-      ByteLocation::Register(ByteRegister::A),
-      ByteLocation::Register(ByteRegister::A),
-      true,
-    )(self, memory);
-  }
-
-  fn rotate_reg_left_through_carry(&mut self, memory: &mut dyn Memory) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.z_bits());
-    CPUImpl::rotate_byte_left_through_carry(
-      ByteLocation::Register(register),
-      ByteLocation::Register(register),
-      false,
-    )(self, memory);
-  }
-
-  fn rotate_indirect_hl_left_through_carry(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::rotate_byte_left_through_carry(
-        ByteLocation::ByteBuffer,
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        false,
-      )
-    );
-  }
-
-  fn rotate_reg_a_right(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::rotate_byte_right(
-      ByteLocation::Register(ByteRegister::A),
-      ByteLocation::Register(ByteRegister::A),
-      true,
-    )(self, memory);
-  }
-
-  fn rotate_reg_right(&mut self, memory: &mut dyn Memory) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.z_bits());
-    CPUImpl::rotate_byte_right(
-      ByteLocation::Register(register),
-      ByteLocation::Register(register),
-      false,
-    )(self, memory);
-  }
-
-  fn rotate_indirect_hl_right(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::rotate_byte_right(
-        ByteLocation::ByteBuffer,
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        false,
-      )
-    );
-  }
-
-  fn rotate_reg_a_right_through_carry(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::rotate_byte_right_through_carry(
-      ByteLocation::Register(ByteRegister::A),
-      ByteLocation::Register(ByteRegister::A),
-      true,
-    )(self, memory);
-  }
-
-  fn rotate_reg_right_through_carry(&mut self, memory: &mut dyn Memory) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.z_bits());
-    CPUImpl::rotate_byte_right_through_carry(
-      ByteLocation::Register(register),
-      ByteLocation::Register(register),
-      false,
-    )(self, memory);
-  }
-
-  fn rotate_indirect_hl_right_through_carry(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::rotate_byte_right_through_carry(
-        ByteLocation::ByteBuffer,
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        false,
-      )
-    );
-  }
-
-  fn shift_reg_left(&mut self, memory: &mut dyn Memory) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.z_bits());
-    CPUImpl::shift_byte_left(
-      ByteLocation::Register(register),
-      ByteLocation::Register(register),
-    )(self, memory);
-  }
-
-  fn shift_reg_right(&mut self, memory: &mut dyn Memory) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.z_bits());
-    CPUImpl::shift_byte_right(
-      ByteLocation::Register(register),
-      ByteLocation::Register(register),
-    )(self, memory);
-  }
-
-  fn shift_reg_right_arithmetic(&mut self, memory: &mut dyn Memory) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.z_bits());
-    CPUImpl::shift_byte_right_arithmetic(
-      ByteLocation::Register(register),
-      ByteLocation::Register(register),
-    )(self, memory);
-  }
-
-  fn shift_indirect_hl_left(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::shift_byte_left(
-        ByteLocation::ByteBuffer,
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-      )
-    );
-  }
-
-  fn shift_indirect_hl_right(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::shift_byte_right(
-        ByteLocation::ByteBuffer,
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-      )
-    );
-  }
-
-  fn shift_indirect_hl_right_arithmetic(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::shift_byte_right_arithmetic(
-        ByteLocation::ByteBuffer,
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-      )
-    );
-  }
-
-  fn swap_reg(&mut self, memory: &mut dyn Memory) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.z_bits());
-    CPUImpl::swap_byte(
-      ByteLocation::Register(register),
-      ByteLocation::Register(register),
-    )(self, memory);
-  }
-
-  fn swap_indirect_hl(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::swap_byte(
-        ByteLocation::ByteBuffer,
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-      )
-    );
-  }
-
-  fn get_reg_bit(&mut self) {
-    let value = self.registers.read_byte(ByteRegister::from_r_bits(self.context.opcode.z_bits()));
-    let bit = self.context.opcode.y_bits();
-    self.registers.write_byte_masked(ByteRegister::F, u8::compose(&[(!value.get_bit(bit), 7), (false, 6), (true, 5)]), 0xE0);
-  }
-
-  fn get_indirect_hl_bit(&mut self) {
-    self.operations.push_back(Box::new(|this, memory| {
-      let address = this.registers.read_word(WordRegister::HL);
-      let value = memory.read(address);
-      let bit = this.context.opcode.y_bits();
-      this.registers.write_byte_masked(ByteRegister::F, u8::compose(&[(!value.get_bit(bit), 7), (false, 6), (true, 5)]), 0xE0);
-    }));
-  }
-
-  fn set_reg_bit(&mut self) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.z_bits());
-    let value = self.registers.read_byte(register);
-    let bit = self.context.opcode.y_bits();
-    self.registers.write_byte(register, value.set_bit(bit));
-  }
-
-  fn set_indirect_hl_bit(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      Box::new(|this, memory| {
-        let bit = this.context.opcode.y_bits();
-        CPUImpl::move_byte(
-          ByteLocation::Value(this.context.byte_buffer.set_bit(bit)),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        )(this, memory);
-      })
-    );
-  }
-
-  fn reset_reg_bit(&mut self) {
-    let register = ByteRegister::from_r_bits(self.context.opcode.z_bits());
-    let value = self.registers.read_byte(register);
-    let bit = self.context.opcode.y_bits();
-    self.registers.write_byte(register, value.reset_bit(bit));
-  }
-
-  fn reset_indirect_hl_bit(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      Box::new(|this, memory| {
-        let bit = this.context.opcode.y_bits();
-        CPUImpl::move_byte(
-          ByteLocation::Value(this.context.byte_buffer.reset_bit(bit)),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::HL),
-        )(this, memory);
-      })
-    );
-  }
-
-  fn jump(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::LowerAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::UpperAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_word(
-        WordLocation::AddressBuffer,
-        WordLocation::Register(WordRegister::PC),
-      )
-    );
-  }
-
-  fn satisfies_condition(&self, opcode: Opcode) -> bool {
-    let condition = opcode.cc_bits();
-    match condition {
-      0x00 => !self.registers.read_byte(ByteRegister::F).get_bit(7),
-      0x01 => self.registers.read_byte(ByteRegister::F).get_bit(7),
-      0x02 => !self.registers.read_byte(ByteRegister::F).get_bit(4),
-      0x03 => self.registers.read_byte(ByteRegister::F).get_bit(4),
-      _ => panic!("{} doesn't map to a condition value", condition)
+        ((zero as u8) << 7) |
+          ((carry_result.get_bit(4) as u8) << 5) |
+          ((carry_result.get_bit(8) as u8) << 4);
+      self.registers.write_byte_masked(ByteRegister::F, flag, params.flag_mask);
     }
+    self.write_byte(memory, params.destination, truncated_result);
   }
 
-  fn jump_conditional(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::LowerAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::UpperAddressBuffer,
-      )
-    );
-    if self.satisfies_condition(self.context.opcode) {
-      self.operations.push_back(
-        CPUImpl::move_word(
-          WordLocation::AddressBuffer,
-          WordLocation::Register(WordRegister::PC),
-        )
-      );
+  fn add_words(&mut self, params: WordArithmeticParams) {
+    let first_value = self.read_word(params.first);
+    let second_value = self.read_word(params.second);
+    let le_bytes1 = first_value.to_le_bytes();
+    let le_bytes2 = second_value.to_le_bytes();
+    let (result1, carry1) = le_bytes1[0].overflowing_add(le_bytes2[0]);
+    let result2 = (le_bytes1[1] as u16) + (le_bytes2[1] as u16) + (carry1 as u16);
+    let carry_result2 = (le_bytes1[1] as u16) ^ (le_bytes2[1] as u16) ^ result2;
+    let result = (&[result1, result2 as u8][..]).read_u16::<LittleEndian>().unwrap();
+    let zero = result == 0;
+    if params.flag_mask != 0 {
+      let flag =
+        ((zero as u8) << 7) |
+          ((carry_result2.get_bit(4) as u8) << 5) |
+          ((carry_result2.get_bit(8) as u8) << 4);
+      self.registers.write_byte_masked(ByteRegister::F, flag, params.flag_mask);
     }
+    self.write_word(params.destination, result);
   }
 
-  fn jump_relative(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::ByteBuffer,
-      )
-    );
-    self.operations.push_back(
-      Box::new(|this, _memory| {
-        this.registers.write_word(WordRegister::PC, this.registers.read_word(WordRegister::PC).wrapping_add(this.context.byte_buffer as i8 as u16));
-      })
-    );
-  }
-
-  fn jump_conditional_relative(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::ByteBuffer,
-      )
-    );
-    if self.satisfies_condition(self.context.opcode) {
-      self.operations.push_back(
-        Box::new(|this, _memory| {
-          this.registers.write_word(WordRegister::PC, this.registers.read_word(WordRegister::PC).wrapping_add(this.context.byte_buffer as i8 as u16));
-        })
-      );
+  fn subtract_bytes(&mut self, params: ByteArithmeticParams, memory: &mut dyn Memory) {
+    let first_value = self.read_byte(memory, params.first);
+    let second_value = self.read_byte(memory, params.second);
+    let borrow = if params.use_carry { self.registers.read_byte(ByteRegister::F).get_bit(4) as u16 } else { 0u16 };
+    let result = 0x100u16 + (first_value as u16) - (second_value as u16) - borrow;
+    let borrow_result = (0x100u16 + first_value as u16) ^ (second_value as u16) ^ result;
+    let truncated_result = result as u8;
+    let zero = truncated_result == 0;
+    if params.flag_mask != 0 {
+      let flag =
+        ((zero as u8) << 7) |
+          (1u8 << 6) |
+          ((borrow_result.get_bit(4) as u8) << 5) |
+          ((borrow_result.get_bit(8) as u8) << 4);
+      self.registers.write_byte_masked(ByteRegister::F, flag, params.flag_mask);
     }
+    self.write_byte(memory, params.destination, truncated_result);
   }
 
-  fn jump_to_indirect_hl(&mut self, memory: &mut dyn Memory) {
-    CPUImpl::move_word(
-      WordLocation::Register(WordRegister::HL),
-      WordLocation::Register(WordRegister::PC),
-    )(self, memory);
+  fn and_bytes(&mut self, params: ByteLogicParams, memory: &mut dyn Memory) {
+    let first_value = self.read_byte(memory, params.first);
+    let second_value = self.read_byte(memory, params.second);
+    let result = first_value & second_value;
+    let zero = result == 0;
+    let flag = ((zero as u8) << 7) | (1u8 << 5);
+    self.registers.write_byte(ByteRegister::F, flag);
+    self.write_byte(memory, params.destination, result);
   }
 
-  fn call_interrupt_routine(&mut self, interrupt: Interrupt, interrupt_controller: &mut dyn InterruptController) {
-    interrupt_controller.clear_interrupt(interrupt);
-    interrupt_controller.disable_interrupts();
-    self.operations.push_back(CPUImpl::noop());
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::decrement_word(WordLocation::Register(WordRegister::SP)),
-        CPUImpl::move_byte(
-          ByteLocation::Register(ByteRegister::UpperPC),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-        ),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::decrement_word(WordLocation::Register(WordRegister::SP)),
-        CPUImpl::move_byte(
-          ByteLocation::Register(ByteRegister::LowerPC),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-        ),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_word(
-        WordLocation::Value(interrupt.get_routine_address()),
-        WordLocation::Register(WordRegister::PC),
-      )
-    );
+  fn or_bytes(&mut self, params: ByteLogicParams, memory: &mut dyn Memory) {
+    let first_value = self.read_byte(memory, params.first);
+    let second_value = self.read_byte(memory, params.second);
+    let result = first_value | second_value;
+    let flag = if result == 0 { 0x80u8 } else { 0x00u8 };
+    self.registers.write_byte(ByteRegister::F, flag);
+    self.write_byte(memory, params.destination, result);
   }
 
-  fn call(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::LowerAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::UpperAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::decrement_word(WordLocation::Register(WordRegister::SP)),
-        CPUImpl::move_byte(
-          ByteLocation::Register(ByteRegister::UpperPC),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-        ),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::decrement_word(WordLocation::Register(WordRegister::SP)),
-        CPUImpl::move_byte(
-          ByteLocation::Register(ByteRegister::LowerPC),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-        ),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_word(
-        WordLocation::AddressBuffer,
-        WordLocation::Register(WordRegister::PC),
-      )
-    );
+  fn xor_bytes(&mut self, params: ByteLogicParams, memory: &mut dyn Memory) {
+    let first_value = self.read_byte(memory, params.first);
+    let second_value = self.read_byte(memory, params.second);
+    let result = first_value ^ second_value;
+    let flag = if result == 0 { 0x80u8 } else { 0x00u8 };
+    self.registers.write_byte(ByteRegister::F, flag);
+    self.write_byte(memory, params.destination, result);
   }
 
-  fn call_conditional(&mut self) {
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::LowerAddressBuffer,
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_byte(
-        ByteLocation::NextMemoryByte,
-        ByteLocation::UpperAddressBuffer,
-      )
-    );
-    if self.satisfies_condition(self.context.opcode) {
-      self.operations.push_back(
-        CPUImpl::combine_operations(
-          CPUImpl::decrement_word(WordLocation::Register(WordRegister::SP)),
-          CPUImpl::move_byte(
-            ByteLocation::Register(ByteRegister::UpperPC),
-            ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-          ),
-        )
-      );
-      self.operations.push_back(
-        CPUImpl::combine_operations(
-          CPUImpl::decrement_word(WordLocation::Register(WordRegister::SP)),
-          CPUImpl::move_byte(
-            ByteLocation::Register(ByteRegister::LowerPC),
-            ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-          ),
-        )
-      );
-      self.operations.push_back(
-        CPUImpl::move_word(
-          WordLocation::AddressBuffer,
-          WordLocation::Register(WordRegister::PC),
-        )
-      );
-    }
+  fn ones_complement_byte(&mut self, params: ByteOperationParams, memory: &mut dyn Memory) {
+    let byte = self.read_byte(memory, params.source);
+    self.write_byte(memory, params.destination, !byte);
+    self.registers.write_byte_masked(ByteRegister::F, 0x60, 0x60);
   }
 
-  fn return_from_call(&mut self) {
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::move_byte(
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-          ByteLocation::LowerWordBuffer,
-        ),
-        CPUImpl::increment_word(WordLocation::Register(WordRegister::SP)),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::move_byte(
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-          ByteLocation::UpperWordBuffer,
-        ),
-        CPUImpl::increment_word(WordLocation::Register(WordRegister::SP)),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_word(
-        WordLocation::WordBuffer,
-        WordLocation::Register(WordRegister::PC),
-      )
-    );
+  fn get_bit_from_byte(&mut self, location: ByteLocation, bit_number: u8, memory: &mut dyn Memory) {
+    let value = self.read_byte(memory, location);
+    self.registers.write_byte_masked(ByteRegister::F, u8::compose(&[(!value.get_bit(bit_number), 7), (false, 6), (true, 5)]), 0xE0);
   }
 
-  fn return_from_interrupt(&mut self, interrupt_controller: &mut dyn InterruptController) {
-    self.return_from_call();
-    self.enable_interrupts(interrupt_controller);
+  fn set_bit_on_byte(&mut self, params: ByteOperationParams, bit_number: u8, memory: &mut dyn Memory) {
+    let value = self.read_byte(memory, params.source);
+    self.write_byte(memory, params.destination, value.set_bit(bit_number));
   }
 
-  fn return_conditionally(&mut self) {
-    self.operations.push_back(
-      Box::new(|this, _memory| {
-        if this.satisfies_condition(this.context.opcode) {
-          this.return_from_call();
-        }
-      })
-    );
+  fn reset_bit_on_byte(&mut self, params: ByteOperationParams, bit_number: u8, memory: &mut dyn Memory) {
+    let value = self.read_byte(memory, params.source);
+    self.write_byte(memory, params.destination, value.reset_bit(bit_number));
   }
 
-  fn restart(&mut self) {
-    let address = match self.context.opcode.y_bits() {
-      0 => 0x0000u16,
-      1 => 0x0008u16,
-      2 => 0x0010u16,
-      3 => 0x0018u16,
-      4 => 0x0020u16,
-      5 => 0x0028u16,
-      6 => 0x0030u16,
-      7 => 0x0038u16,
-      _ => panic!("{} is not a valid restart code", self.context.opcode.y_bits())
-    };
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::decrement_word(WordLocation::Register(WordRegister::SP)),
-        CPUImpl::move_byte(
-          ByteLocation::Register(ByteRegister::UpperPC),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-        ),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::combine_operations(
-        CPUImpl::decrement_word(WordLocation::Register(WordRegister::SP)),
-        CPUImpl::move_byte(
-          ByteLocation::Register(ByteRegister::LowerPC),
-          ByteLocation::MemoryReferencedByRegister(WordRegister::SP),
-        ),
-      )
-    );
-    self.operations.push_back(
-      CPUImpl::move_word(
-        WordLocation::Value(address),
-        WordLocation::Register(WordRegister::PC),
-      )
-    );
+  fn rotate_byte_left(&mut self, params: ByteRotationParams, memory: &mut dyn Memory) {
+    let value = self.read_byte(memory, params.source);
+    let result = value.rotate_left(1);
+    let zero = !params.unset_zero && result == 0;
+    let flag =
+      ((zero as u8) << 7) | ((value.get_bit(7) as u8) << 4);
+    self.registers.write_byte(ByteRegister::F, flag);
+    self.write_byte(memory, params.destination, result);
+  }
+
+  fn rotate_byte_left_through_carry(&mut self, params: ByteRotationParams, memory: &mut dyn Memory) {
+    let value = self.read_byte(memory, params.source);
+    let carry = self.registers.read_byte(ByteRegister::F).get_bit(4);
+    let result = (value << 1) | (carry as u8);
+    let zero = !params.unset_zero && result == 0;
+    let flag =
+      ((zero as u8) << 7) | ((value.get_bit(7) as u8) << 4);
+    self.registers.write_byte(ByteRegister::F, flag);
+    self.write_byte(memory, params.destination, result);
+  }
+
+  fn rotate_byte_right(&mut self, params: ByteRotationParams, memory: &mut dyn Memory) {
+    let value = self.read_byte(memory, params.source);
+    let result = value.rotate_right(1);
+    let zero = !params.unset_zero && result == 0;
+    let flag =
+      ((zero as u8) << 7) | ((value.get_bit(0) as u8) << 4);
+    self.registers.write_byte(ByteRegister::F, flag);
+    self.write_byte(memory, params.destination, result);
+  }
+
+  fn rotate_byte_right_through_carry(&mut self, params: ByteRotationParams, memory: &mut dyn Memory) {
+    let value = self.read_byte(memory, params.source);
+    let carry = self.registers.read_byte(ByteRegister::F).get_bit(4);
+    let result = (value >> 1) | (if carry { 0x80u8 } else { 0x00u8 });
+    let zero = !params.unset_zero && result == 0;
+    let flag =
+      ((zero as u8) << 7) | ((value.get_bit(0) as u8) << 4);
+    self.registers.write_byte(ByteRegister::F, flag);
+    self.write_byte(memory, params.destination, result);
+  }
+
+  fn shift_byte_left(&mut self, params: ByteShiftParams, memory: &mut dyn Memory) {
+    let value = self.read_byte(memory, params.source);
+    let result = value << 1;
+    let zero = result == 0;
+    let flag =
+      ((zero as u8) << 7) | ((value.get_bit(7) as u8) << 4);
+    self.registers.write_byte(ByteRegister::F, flag);
+    self.write_byte(memory, params.destination, result);
+  }
+
+  fn shift_byte_right(&mut self, params: ByteShiftParams, memory: &mut dyn Memory) {
+    let value = self.read_byte(memory, params.source);
+    let result = if params.arithmetic { (value >> 1) | (value & 0x80) } else { value >> 1 };
+    let zero = result == 0;
+    let flag =
+      ((zero as u8) << 7) | ((value.get_bit(0) as u8) << 4);
+    self.registers.write_byte(ByteRegister::F, flag);
+    self.write_byte(memory, params.destination, result);
+  }
+
+  fn swap_byte(&mut self, params: ByteOperationParams, memory: &mut dyn Memory) {
+    let value = self.read_byte(memory, params.source);
+    let result = value.rotate_left(4);
+    let flag = if result == 0 { 0x80u8 } else { 0x00u8 };
+    self.registers.write_byte(ByteRegister::F, flag);
+    self.write_byte(memory, params.destination, result);
+  }
+
+  fn increment_word(&mut self, location: WordLocation) {
+    let word = self.read_word(location);
+    self.write_word(location, word.wrapping_add(1));
+  }
+
+  fn decrement_word(&mut self, location: WordLocation) {
+    let word = self.read_word(location);
+    self.write_word(location, word.wrapping_sub(1));
   }
 
   fn decimal_adjust_reg_a(&mut self, memory: &mut dyn Memory) {
@@ -1931,23 +433,23 @@ impl CPUImpl {
     if n {
       let lower = if half_carry { 6u8 } else { 0u8 };
       let upper = if carry { 0x60u8 } else { 0u8 };
-      CPUImpl::subtract_bytes(ByteArithmeticParams {
+      self.subtract_bytes(ByteArithmeticParams {
         first: ByteLocation::Value(a),
         second: ByteLocation::Value(upper | lower),
         destination: ByteLocation::Register(ByteRegister::A),
         use_carry: false,
         flag_mask: 0xB0,
-      })(self, memory);
+      }, memory);
     } else {
       let lower = if half_carry || ((a & 0x0F) >= 0x0A) { 6u8 } else { 0u8 };
       let upper = if carry || (a > 0x99) { 0x60u8 } else { 0u8 };
-      CPUImpl::add_bytes(ByteArithmeticParams {
+      self.add_bytes(ByteArithmeticParams {
         first: ByteLocation::Value(a),
         second: ByteLocation::Value(upper | lower),
         destination: ByteLocation::Register(ByteRegister::A),
         use_carry: false,
         flag_mask: 0xB0,
-      })(self, memory);
+      }, memory);
     };
     if carry {
       self.registers.write_byte_masked(ByteRegister::F, 0x10, 0x30);
@@ -1956,25 +458,12 @@ impl CPUImpl {
     }
   }
 
-  fn ones_complement_reg_a(&mut self) {
-    self.registers.write_byte(ByteRegister::A, !self.registers.read_byte(ByteRegister::A));
-    self.registers.write_byte_masked(ByteRegister::F, 0x60, 0x60);
-  }
-
   fn flip_carry_flag(&mut self) {
     self.registers.write_byte_masked(ByteRegister::F, (self.registers.read_byte(ByteRegister::F) ^ 0x10) & 0x90, 0x70);
   }
 
   fn set_carry_flag(&mut self) {
     self.registers.write_byte_masked(ByteRegister::F, 0x10, 0x70);
-  }
-
-  fn disable_interrupts(&mut self, interrupt_controller: &mut dyn InterruptController) {
-    interrupt_controller.disable_interrupts();
-  }
-
-  fn enable_interrupts(&mut self, interrupt_controller: &mut dyn InterruptController) {
-    interrupt_controller.enable_interrupts();
   }
 
   fn halt(&mut self) {
@@ -1989,10 +478,12 @@ impl CPUImpl {
 #[cfg(test)]
 pub mod test {
   use assert_hex::assert_eq_hex;
-  use super::*;
-  use crate::memory::memory::test::MockMemory;
   use test_case::test_case;
+
   use crate::cpu::interrupts::InterruptControllerImpl;
+  use crate::memory::memory::test::MockMemory;
+
+  use super::*;
 
   #[test]
   fn reg_to_reg_ld() {
@@ -2960,13 +1451,13 @@ pub mod test {
     let mut cpu = CPUImpl::new();
     let mut interrupt_controller = InterruptControllerImpl::new();
     let mut memory = MockMemory::new(0x10000);
-    cpu.registers.write_byte(ByteRegister::D, 0x52);
-    cpu.registers.write_byte(ByteRegister::F, 0x10);
+    cpu.registers.write_byte(ByteRegister::D, value);
+    cpu.registers.write_byte(ByteRegister::F, old_f);
     memory.write(0x0000, 0xCB);
     memory.write(0x0001, 0x1A);
     cpu.ticks(&mut memory, &mut interrupt_controller, 2);
-    assert_eq!(cpu.registers.read_byte(ByteRegister::D), 0xA9);
-    assert_eq!(cpu.registers.read_byte(ByteRegister::F), 0x00);
+    assert_eq!(cpu.registers.read_byte(ByteRegister::D), result);
+    assert_eq!(cpu.registers.read_byte(ByteRegister::F), new_f);
   }
 
   #[test_case(0x01, 0x00, 0x00, 0x90; "zero flag set correctly")]

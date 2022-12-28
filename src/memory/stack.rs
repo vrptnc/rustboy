@@ -9,8 +9,6 @@ impl Stack {
   const END_ADDRESS: u16 = 0xFFFE;
   const SIZE: usize = 127;
 
-  const MY_VALUE: u8 = 123u8;
-
   pub fn new() -> Stack {
     Stack {
       bytes: [0; Stack::SIZE]

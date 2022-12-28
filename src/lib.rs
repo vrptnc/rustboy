@@ -16,7 +16,6 @@ use cpu::cpu::*;
 use memory::main_memory::*;
 use web_sys::console;
 use crate::infrastructure::time::clock::JSClock;
-use crate::time::duration::Duration;
 
 #[cfg(feature = "wee_alloc")]
 #[global_allocator]

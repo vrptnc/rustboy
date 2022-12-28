@@ -1,10 +1,7 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use crate::{CPU, MainMemory};
+use crate::CPU;
 use crate::controllers::lcd::{LCDMode, LCDController};
 use crate::infrastructure::toggle::Toggle;
 use crate::memory::memory::Memory;
-use crate::time::time::ClockAware;
 use crate::util::bit_util::BitUtil;
 
 #[derive(PartialEq)]
@@ -147,8 +144,8 @@ impl DMAControllerImpl {
         self.cancel_requested.clear();
         self.hdma5 = 0xFF;
       } else {
-        let lines_to_transfer = (bytes_to_transfer / 16);
-        let lines_transferred = (bytes_transferred / 16);
+        let lines_to_transfer = bytes_to_transfer / 16;
+        let lines_transferred = bytes_transferred / 16;
         let lines_remaining = lines_to_transfer - lines_transferred;
         self.hdma5 = lines_remaining - 1;
       }
@@ -212,18 +209,10 @@ impl Memory for DMAControllerImpl {
 
 #[cfg(test)]
 mod tests {
-  use std::cell::RefCell;
-  use std::rc::Rc;
   use assert_hex::assert_eq_hex;
-  use crate::controllers::lcd::LCDControllerImpl;
   use crate::controllers::lcd::MockLCDController;
-  use crate::{CPUImpl, MockCPU};
-  use crate::cpu::interrupts::InterruptControllerImpl;
-  use crate::memory::cram::CRAMImpl;
-  use crate::memory::memory::CGBMode;
+  use crate::MockCPU;
   use crate::memory::memory::test::MockMemory;
-  use crate::memory::oam::OAMImpl;
-  use crate::memory::vram::VRAMImpl;
   use super::*;
 
   fn create_memory() -> MockMemory {
@@ -349,7 +338,7 @@ mod tests {
       .return_const(false); // Set the CPU to disabled for the duration of the HBlank DMA transfer
     dma.tick(&mut memory, &mut cpu, &mut lcd, false); // Do a single tick to start the transfer during HBlank
     dma.write(0xFF55, 0x00); // Cancel the HBlank DMA transfer straight away
-    for index in (0usize..0x1F) { // Do a number of ticks still during HBlank, during these ticks, data should still be transferred
+    for _ in 0usize..0x1F { // Do a number of ticks still during HBlank, during these ticks, data should still be transferred
       dma.tick(&mut memory, &mut cpu, &mut lcd, false);
     }
 

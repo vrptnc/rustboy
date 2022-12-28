@@ -1,16 +1,18 @@
-use crate::memory::mbc::Loadable;
+use crate::memory::mbc::{Loadable, MBC};
 use crate::memory::memory::{Memory, ROMSize};
 use crate::util::bit_util::BitUtil;
 
-struct MBC2 {
+pub struct MBC2 {
   ram_enabled: bool,
   bank_address: usize,
   rom: Vec<u8>,
   ram: Vec<u8>,
 }
 
+impl MBC for MBC2 {}
+
 impl MBC2 {
-  fn new(rom_size: ROMSize) -> MBC2 {
+  pub fn new(rom_size: ROMSize) -> MBC2 {
     MBC2 {
       ram_enabled: false,
       bank_address: 0x01,

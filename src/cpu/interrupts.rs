@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use mockall::automock;
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
 
@@ -47,6 +48,7 @@ impl Interrupt {
   }
 }
 
+#[automock]
 pub trait InterruptController {
   fn get_requested_interrupt(&self) -> Option<Interrupt>;
   fn interrupts_enabled(&self) -> bool;

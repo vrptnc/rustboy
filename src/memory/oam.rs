@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use mockall::automock;
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
 
@@ -30,23 +29,13 @@ impl ObjectAttributes {
 
 #[derive(Copy, Clone)]
 pub struct OAMObject {
-  lcd_y: u8,
-  lcd_x: u8,
-  tile_index: u8,
-  attribute: u8,
+  pub lcd_y: u8,
+  pub lcd_x: u8,
+  pub tile_index: u8,
+  pub attributes: ObjectAttributes,
 }
 
-impl OAMObject {
-  fn new() -> OAMObject {
-    OAMObject {
-      lcd_y: 0,
-      lcd_x: 0,
-      tile_index: 0,
-      attribute: 0,
-    }
-  }
-}
-
+#[automock]
 pub trait OAM {
   fn object_intersects_with_line(&self, object_index: u8, line: u8, use_8_x_16_tiles: bool) -> bool;
   fn get_object(&self, object_index: u8) -> OAMObject;
@@ -79,7 +68,7 @@ impl OAM for OAMImpl {
       lcd_y: object_bytes[0],
       lcd_x: object_bytes[1],
       tile_index: object_bytes[2],
-      attribute: object_bytes[3],
+      attributes: ObjectAttributes(object_bytes[3]),
     }
   }
 }

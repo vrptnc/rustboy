@@ -1,27 +1,19 @@
-use std::borrow::Borrow;
-use crate::controllers::dma::DMAController;
-use crate::controllers::lcd::LCDController;
-use crate::memory::oam::OAM;
-use crate::controllers::timer::TimerController;
-use crate::memory::bank_memory::BankMemory;
-use crate::memory::linear_memory::LinearMemory;
-use crate::memory::memory::{CGBMode, Memory};
-use crate::memory::stack::Stack;
-use crate::memory::vram::VRAMImpl;
-use crate::memory::wram::WRAM;
+use crate::memory::memory::Memory;
 
 pub struct MainMemory<'a> {
   rom: &'a mut dyn Memory,
   vram: &'a mut dyn Memory,
   wram: &'a mut dyn Memory,
+  cram: &'a mut dyn Memory,
   oam: &'a mut dyn Memory,
   lcd: &'a mut dyn Memory,
   timer: &'a mut dyn Memory,
   dma: &'a mut dyn Memory,
   stack: &'a mut dyn Memory,
+  control_registers: &'a mut dyn Memory,
   reserved_area_1: &'a mut dyn Memory,
   reserved_area_2: &'a mut dyn Memory,
-  interrupt_controller: &'a mut dyn Memory
+  interrupt_controller: &'a mut dyn Memory,
 }
 
 impl<'a> Memory for MainMemory<'a> {
@@ -41,8 +33,11 @@ impl<'a> Memory for MainMemory<'a> {
       0xFF10..=0xFF3F => 0,
       0xFF40..=0xFF45 => self.lcd.read(address),
       0xFF46 => self.dma.read(address),
+      0xFF4C..=0xFF4D => self.control_registers.read(address),
       0xFF4F => self.vram.read(address),
+      0xFF50 => self.control_registers.read(address),
       0xFF51..=0xFF55 => self.dma.read(address),
+      0xFF68..=0xFF6B => self.cram.read(address),
       0xFF70 => self.wram.read(address),
       0xFF80..=0xFFFE => self.stack.read(address),
       0xFFFF => self.interrupt_controller.read(0xFFFF),
@@ -61,8 +56,11 @@ impl<'a> Memory for MainMemory<'a> {
       0xFEA0..=0xFEFF => self.reserved_area_2.write(address - 0xFEA0, value),
       0xFF04..=0xFF07 => self.timer.write(address, value),
       0xFF46 => self.dma.write(address, value),
+      0xFF4C..=0xFF4D => self.control_registers.write(address, value),
       0xFF4F => self.vram.write(address, value),
+      0xFF50 => self.control_registers.write(address, value),
       0xFF51..=0xFF55 => self.dma.write(address, value),
+      0xFF68..=0xFF6B => self.cram.write(address, value),
       0xFF70 => self.wram.write(address, value),
       0xFF80..=0xFFFE => self.stack.write(address - 0xFF80, value),
       _ => panic!("Trying to write value to main memory at unmapped address {:#06x}", address)

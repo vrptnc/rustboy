@@ -1,7 +1,4 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use crate::time::time::ClockAware;
-use crate::cpu::interrupts::{Interrupt, InterruptController, InterruptControllerRef};
+use crate::cpu::interrupts::{Interrupt, InterruptController};
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
 

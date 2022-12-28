@@ -1,7 +1,7 @@
-use crate::memory::mbc::Loadable;
+use crate::memory::mbc::{Loadable, MBC};
 use crate::memory::memory::{Memory, RAMSize, ROMSize};
 
-struct MBC5 {
+pub struct MBC5 {
   ram_enabled: bool,
   ram_bank_address: usize,
   rom_bank_address: usize,
@@ -9,8 +9,10 @@ struct MBC5 {
   ram: Vec<u8>,
 }
 
+impl MBC for MBC5 {}
+
 impl MBC5 {
-  fn new(rom_size: ROMSize, ram_size: RAMSize) -> MBC5 {
+  pub fn new(rom_size: ROMSize, ram_size: RAMSize) -> MBC5 {
     MBC5 {
       ram_enabled: false,
       ram_bank_address: 0x00,
