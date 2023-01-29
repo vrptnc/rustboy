@@ -36,6 +36,10 @@ pub trait MBC: Memory + Loadable {
   fn cgb_mode(&self) -> CGBMode {
     CGBMode::from_byte(self.read(0x0143))
   }
+
+  fn tick(&mut self, double_speed: bool) {
+
+  }
 }
 
 mock! {

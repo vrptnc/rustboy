@@ -1,7 +1,9 @@
+use web_sys::console;
+
+use crate::controllers::lcd::{LCDController, LCDMode};
 use crate::CPU;
-use crate::controllers::lcd::{LCDMode, LCDController};
 use crate::infrastructure::toggle::Toggle;
-use crate::memory::memory::Memory;
+use crate::memory::memory::{Memory, MemoryAddress};
 use crate::util::bit_util::BitUtil;
 
 #[derive(PartialEq)]
@@ -169,30 +171,43 @@ impl DMAController for DMAControllerImpl {
 impl Memory for DMAControllerImpl {
   fn read(&self, address: u16) -> u8 {
     match address {
-      0xFF46 => self.dma,
-      0xFF55 => self.hdma5,
+      MemoryAddress::DMA => self.dma,
+      MemoryAddress::HDMA1 => self.high_source_address,
+      MemoryAddress::HDMA2 => self.low_source_address,
+      MemoryAddress::HDMA3 => self.high_destination_address,
+      MemoryAddress::HDMA4 => self.low_destination_address,
+      MemoryAddress::HDMA5 => self.hdma5,
       _ => panic!("DMA can't read from address {}", address)
     }
   }
 
   fn write(&mut self, address: u16, value: u8) {
     match address {
-      0xFF46 => {
+      MemoryAddress::DMA => {
         self.dma = value;
         self.active_transfer = DMATransfer::legacy((value as u16) * 0x100);
       }
-      0xFF51 => self.high_source_address = value,
-      0xFF52 => self.low_source_address = value & 0xF0,
-      0xFF53 => self.high_destination_address = (value & 0x1F) | (0x80),
-      0xFF54 => self.low_destination_address = value & 0xF0,
-      0xFF55 => {
+      MemoryAddress::HDMA1 => self.high_source_address = value,
+      MemoryAddress::HDMA2 => self.low_source_address = value & 0xF0,
+      MemoryAddress::HDMA3 => self.high_destination_address = (value & 0x1F) | (0x80),
+      MemoryAddress::HDMA4 => self.low_destination_address = value & 0xF0,
+      MemoryAddress::HDMA5 => {
         match self.active_transfer.transfer_type {
           DMATransferType::Inactive => {
+            let source_address = ((self.high_source_address as u16) << 8) | (self.low_source_address as u16);
+            let destination_address = ((self.high_destination_address as u16) << 8) | (self.low_destination_address as u16);
+            let bytes_to_transfer = ((value & 0x7F) + 1) * 16;
+            let transfer_type = if value.get_bit(7) { DMATransferType::HBlank } else { DMATransferType::GeneralPurpose };
+            if value.get_bit(7) {
+              DMATransferType::HBlank
+            } else {
+              DMATransferType::GeneralPurpose
+            };
             self.active_transfer = DMATransfer::new(
-              ((self.high_source_address as u16) << 8) | (self.low_source_address as u16),
-              ((self.high_destination_address as u16) << 8) | (self.low_destination_address as u16),
-              ((value & 0x7F) + 1) * 16,
-              if value.get_bit(7) { DMATransferType::HBlank } else { DMATransferType::GeneralPurpose },
+              source_address,
+              destination_address,
+              bytes_to_transfer,
+              transfer_type,
             );
             self.hdma5 = 0x00;
           }
@@ -210,13 +225,16 @@ impl Memory for DMAControllerImpl {
 #[cfg(test)]
 mod tests {
   use assert_hex::assert_eq_hex;
+
   use crate::controllers::lcd::MockLCDController;
-  use crate::MockCPU;
+  use crate::memory::memory::MemoryAddress;
   use crate::memory::memory::test::MockMemory;
+  use crate::MockCPU;
+
   use super::*;
 
   fn create_memory() -> MockMemory {
-    let mut memory = MockMemory::new(0x10000);
+    let mut memory = MockMemory::new();
     for address in 0xC000u16..0xC100u16 {
       memory.write(address, address as u8);
     }
@@ -231,7 +249,7 @@ mod tests {
     let mut lcd = MockLCDController::new();
     cpu.expect_enable().never();
     cpu.expect_disable().never();
-    dma.write(0xFF46, 0xC0);
+    dma.write(MemoryAddress::DMA, 0xC0);
     for (index, address) in (0xFE00u16..=0xFE9Fu16).enumerate() {
       assert_eq_hex!(memory.read(address), 0x0000);
       dma.tick(&mut memory, &mut cpu, &mut lcd, false);
@@ -248,11 +266,11 @@ mod tests {
     let mut memory = create_memory();
     let mut cpu = MockCPU::new();
     let mut lcd = MockLCDController::new();
-    dma.write(0xFF51, 0xC0);
-    dma.write(0xFF52, 0x05); // 5 should be masked away
-    dma.write(0xFF53, 0x01); // Should be masked with 0x1F so that result is 0x81
-    dma.write(0xFF54, 0x23); // 3 should be masked away -> result is 0x20
-    dma.write(0xFF55, 0x06); // Transfer 7 lines = 7 x 16 byte = 112 byte
+    dma.write(MemoryAddress::HDMA1, 0xC0);
+    dma.write(MemoryAddress::HDMA2, 0x05); // 5 should be masked away
+    dma.write(MemoryAddress::HDMA3, 0x01); // Should be masked with 0x1F so that result is 0x81
+    dma.write(MemoryAddress::HDMA4, 0x23); // 3 should be masked away -> result is 0x20
+    dma.write(MemoryAddress::HDMA5, 0x06); // Transfer 7 lines = 7 x 16 byte = 112 byte
     cpu.expect_disable().times(0x70).return_const(());
     cpu.expect_enable().once().return_const(());
     for (index, address) in (0x8120u16..=0x818Fu16).enumerate() {
@@ -260,7 +278,7 @@ mod tests {
       dma.tick(&mut memory, &mut cpu, &mut lcd, false);
       assert_eq_hex!(memory.read(address), index as u8);
     }
-    assert_eq_hex!(dma.read(0xFF55), 0xFF);
+    assert_eq_hex!(dma.read(MemoryAddress::HDMA5), 0xFF);
     cpu.expect_enable().once().return_const(()); // Once DMA returns to inactive, the CPU should be (re)enabled on the next tick
     dma.tick(&mut memory, &mut cpu, &mut lcd, false);
     assert_eq_hex!(memory.read(0x8190), 0x0000);
@@ -272,11 +290,11 @@ mod tests {
     let mut memory = create_memory();
     let mut cpu = MockCPU::new();
     let mut lcd = MockLCDController::new();
-    dma.write(0xFF51, 0xC0);
-    dma.write(0xFF52, 0x05); // 5 should be masked away
-    dma.write(0xFF53, 0x01); // Should be masked with 0x1F so that result is 0x81
-    dma.write(0xFF54, 0x23); // 3 should be masked away -> result is 0x20
-    dma.write(0xFF55, 0x86); // Transfer 7 lines = 7 x 16 byte = 112 byte
+    dma.write(MemoryAddress::HDMA1, 0xC0);
+    dma.write(MemoryAddress::HDMA2, 0x05); // 5 should be masked away
+    dma.write(MemoryAddress::HDMA3, 0x01); // Should be masked with 0x1F so that result is 0x81
+    dma.write(MemoryAddress::HDMA4, 0x23); // 3 should be masked away -> result is 0x20
+    dma.write(MemoryAddress::HDMA5, 0x86); // Transfer 7 lines = 7 x 16 byte = 112 byte
 
     lcd.expect_get_mode()
       .times(0x70)
@@ -308,7 +326,7 @@ mod tests {
       dma.tick(&mut memory, &mut cpu, &mut lcd, false);
       assert_eq_hex!(memory.read(address), index as u8);
     }
-    assert_eq_hex!(dma.read(0xFF55), 0xFF);
+    assert_eq_hex!(dma.read(MemoryAddress::HDMA5), 0xFF);
     cpu.expect_enable().once().return_const(()); // Once DMA returns to inactive, the CPU should be (re)enabled on the next tick
     dma.tick(&mut memory, &mut cpu, &mut lcd, false);
     assert_eq_hex!(memory.read(0x8190), 0x0000);
@@ -321,11 +339,11 @@ mod tests {
     let mut cpu = MockCPU::new();
     let mut lcd = MockLCDController::new();
 
-    dma.write(0xFF51, 0xC0);
-    dma.write(0xFF52, 0x05); // 5 should be masked away
-    dma.write(0xFF53, 0x01); // Should be masked with 0x1F so that result is 0x81
-    dma.write(0xFF54, 0x23); // 3 should be masked away -> result is 0x20
-    dma.write(0xFF55, 0x86); // Transfer 7 lines = 7 x 16 byte = 112 byte
+    dma.write(MemoryAddress::HDMA1, 0xC0);
+    dma.write(MemoryAddress::HDMA2, 0x05); // 5 should be masked away
+    dma.write(MemoryAddress::HDMA3, 0x01); // Should be masked with 0x1F so that result is 0x81
+    dma.write(MemoryAddress::HDMA4, 0x23); // 3 should be masked away -> result is 0x20
+    dma.write(MemoryAddress::HDMA5, 0x86); // Transfer 7 lines = 7 x 16 byte = 112 byte
 
     lcd.expect_get_mode()
       .times(0x20)
@@ -337,7 +355,7 @@ mod tests {
       .times(0x20)
       .return_const(false); // Set the CPU to disabled for the duration of the HBlank DMA transfer
     dma.tick(&mut memory, &mut cpu, &mut lcd, false); // Do a single tick to start the transfer during HBlank
-    dma.write(0xFF55, 0x00); // Cancel the HBlank DMA transfer straight away
+    dma.write(MemoryAddress::HDMA5, 0x00); // Cancel the HBlank DMA transfer straight away
     for _ in 0usize..0x1F { // Do a number of ticks still during HBlank, during these ticks, data should still be transferred
       dma.tick(&mut memory, &mut cpu, &mut lcd, false);
     }
@@ -361,7 +379,7 @@ mod tests {
       .return_const(());
     dma.tick(&mut memory, &mut cpu, &mut lcd, false); // Do an extra tick to verify that there are no more writes
 
-    assert_eq_hex!(dma.read(0xFF55), 0x84);
+    assert_eq_hex!(dma.read(MemoryAddress::HDMA5), 0x84);
     assert_eq_hex!(memory.read(0x813F), 0x1F);
     assert_eq_hex!(memory.read(0x8140), 0x00);
   }

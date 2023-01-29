@@ -62,8 +62,8 @@ impl<T, const BITS: u32> Iterator for UnsignedCrumbIterator<T, BITS> where
       None
     } else {
       let result = ((self.value >> self.current_bit).as_()) & 0x3;
-      self.current_last_bit += 2;
-      Some(result as u8)
+      self.current_bit += 2;
+      Some(result)
     }
   }
 }
@@ -87,6 +87,7 @@ pub trait BitUtil {
   fn compose(bits: &[(bool, u8)]) -> Self;
   fn get_bit(&self, bit: u8) -> bool;
   fn set_bit(&self, bit: u8) -> Self;
+  fn toggle_bit(&self, bit: u8) -> Self;
   fn reset_bit(&self, bit: u8) -> Self;
   fn get_lower_byte(&self) -> u8;
   fn get_upper_byte(&self) -> u8;
@@ -122,6 +123,10 @@ impl BitUtil for u8 {
 
   fn set_bit(&self, bit: u8) -> Self {
     self | (1u8 << bit)
+  }
+
+  fn toggle_bit(&self, bit: u8) -> Self {
+    self ^ (1u8 << bit)
   }
 
   fn reset_bit(&self, bit: u8) -> Self {
@@ -183,6 +188,10 @@ impl BitUtil for u16 {
     self & !(1u16 << bit)
   }
 
+  fn toggle_bit(&self, bit: u8) -> Self {
+    self ^ (1u16 << bit)
+  }
+
   fn get_lower_byte(&self) -> u8 {
     *self as u8
   }
@@ -226,15 +235,19 @@ impl BitUtil for usize {
   }
 
   fn get_bit(&self, bit: u8) -> bool {
-    (self & ((1 as usize) << bit)) != 0
+    (self & (1usize << bit)) != 0
   }
 
   fn set_bit(&self, bit: u8) -> Self {
-    self | ((1 as usize) << bit)
+    self | (1usize << bit)
   }
 
   fn reset_bit(&self, bit: u8) -> Self {
-    self & !((1 as usize) << bit)
+    self & !(1usize << bit)
+  }
+
+  fn toggle_bit(&self, bit: u8) -> Self {
+    self ^ (1usize << bit)
   }
 
   fn get_lower_byte(&self) -> u8 {
@@ -257,8 +270,24 @@ mod tests {
 
   #[test]
   fn interleave_bytes() {
-    let x: u8 = 0x7C;
-    let y: u8 = 0x56;
+    let x: u8 = 0x7C; // 0111 1100
+    let y: u8 = 0x56; // 0101 0110 => 0011 0111 0111 1000
+
     assert_eq_hex!(x.interleave_with(y), 0x3778u16);
+  }
+
+  #[test]
+  fn interleave() {
+    let byte1 = 0x3C;
+    let byte2 = 0x7E;
+    let bytes: Vec<u8> = byte1.interleave_with(byte2).crumbs().rev().collect();
+    assert_eq_hex!(bytes[0], 0x2F);
+    assert_eq_hex!(bytes[1], 0xF8);
+  }
+
+  #[test]
+  fn toggle_bit() {
+      assert_eq_hex!(0xFFu8.toggle_bit(5), 0xDF);
+      assert_eq_hex!(0x00u8.toggle_bit(5), 0x20);
   }
 }

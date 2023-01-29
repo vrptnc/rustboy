@@ -1,0 +1,49 @@
+@import '../../styles/colors';
+
+.app {
+  height: 100%;
+  width: 100%;
+  padding: 15px;
+  font-family: Roboto, Arial, sans-serif;
+}
+
+.button-wrapper {
+  display: flex;
+}
+
+.visualizer {
+  display: block;
+  position: relative;
+  margin-top: 20px;
+}
+
+#main-canvas {
+  position: absolute;
+  background-color: white;
+  top: 60px;
+  left: 75px;
+  width: 215px;
+}
+
+.button {
+  display: block;
+  cursor: pointer;
+  padding: 8px;
+  background-color: $button-color;
+  color: white;
+
+  &:hover {
+    background-color: darken($button-color, 10%);
+  }
+}
+
+.hidden {
+  display: none;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+}

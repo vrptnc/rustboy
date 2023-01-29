@@ -1,6 +1,5 @@
 pub mod control;
-pub mod dma;
-pub mod main_memory;
+pub mod bus;
 pub mod memory;
 pub mod linear_memory;
 pub mod bank_memory;
@@ -15,3 +14,5 @@ pub mod wram;
 pub mod stack;
 pub mod cram;
 pub mod oam;
+pub mod dma_bus;
+pub mod unmapped;

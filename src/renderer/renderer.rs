@@ -102,5 +102,6 @@ impl Color {
 
 #[automock]
 pub trait Renderer {
-  fn draw_pixel(&self, x: u8, y: u8, color: Color, draw_in_back: bool);
+  fn draw_pixel(&mut self, x: u8, y: u8, color: Color, drawing_priority: u8);
+  fn flush(&mut self);
 }

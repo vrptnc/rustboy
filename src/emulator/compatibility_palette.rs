@@ -1,12 +1,15 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use crate::emulator::emulator::Emulator;
 use crate::memory::mbc::MBC;
 use crate::renderer::renderer::Color;
 use crate::util::bit_util::BitUtil;
 
-pub struct CompatibilityPalette {
-  bgp: [Color; 4],
-  obj0: [Color; 4],
-  obj1: [Color; 4],
+#[derive(Copy, Clone, Debug)]
+pub struct CompatibilityPalettes {
+  pub bgp: [Color; 4],
+  pub obj0: [Color; 4],
+  pub obj1: [Color; 4],
 }
 
 pub struct CompatibilityPaletteLoader {}
@@ -187,15 +190,16 @@ impl CompatibilityPaletteLoader {
     'R'
   ];
 
-  pub fn get_compatibility_palettes(rom: &Box<dyn MBC>) -> CompatibilityPalette {
-    let palette_id = if rom.is_licensed_by_nintendo() {
-      let title_checksum = rom.title_checksum();
+  pub fn get_compatibility_palettes(rom: Rc<RefCell<dyn MBC>>) -> CompatibilityPalettes {
+    let borrowed_rom = (*rom).borrow();
+    let palette_id = if borrowed_rom.is_licensed_by_nintendo() {
+      let title_checksum = borrowed_rom.title_checksum();
       if let Some(checksum_index) = CompatibilityPaletteLoader::TITLE_CHECKSUMS.into_iter().position(|value| value == title_checksum) {
         if checksum_index <= 64 {
           checksum_index
         } else {
           // Do a 4th letter check
-          let fourth_letter = rom.fourth_title_letter();
+          let fourth_letter = borrowed_rom.fourth_title_letter();
           let offset_checksum_index = checksum_index - 65;
           if let Some(row) = CompatibilityPaletteLoader::TITLE_FOURTH_LETTERS.into_iter()
             .skip(offset_checksum_index)
@@ -221,7 +225,7 @@ impl CompatibilityPaletteLoader {
     let bgp_index = (palette_indexes[2] as usize) / 2;
     let obj0_index = ((if shuffle_flags.get_bit(0) { palette_indexes[0] } else { palette_indexes[2] }) as usize) / 2;
     let obj1_index = ((if shuffle_flags.get_bit(2) { palette_indexes[1] } else if shuffle_flags.get_bit(1) { palette_indexes[0] } else { palette_indexes[2] }) as usize) / 2;
-    return CompatibilityPalette {
+    return CompatibilityPalettes {
       bgp: (&CompatibilityPaletteLoader::PALETTES[bgp_index..(bgp_index + 4)]).try_into().unwrap(),
       obj0: (&CompatibilityPaletteLoader::PALETTES[obj0_index..(obj0_index + 4)]).try_into().unwrap(),
       obj1: (&CompatibilityPaletteLoader::PALETTES[obj1_index..(obj1_index + 4)]).try_into().unwrap(),
@@ -242,8 +246,8 @@ mod tests {
     rom.expect_is_licensed_by_nintendo().once().return_const(true);
     rom.expect_title_checksum().once().return_const(0x14);
     rom.expect_fourth_title_letter().never();
-    let boxed_rom = Box::new(rom);
-    let result = CompatibilityPaletteLoader::get_compatibility_palettes(&(boxed_rom as Box<dyn MBC>));
+    let boxed_rom = Rc::new(RefCell::new(rom));
+    let result = CompatibilityPaletteLoader::get_compatibility_palettes(boxed_rom);
     assert_eq!(result.bgp[0], Color::from_rgb(0xFF, 0xFF, 0xFF).to_rgb555());
     assert_eq!(result.bgp[1], Color::from_rgb(0xFF, 0x84, 0x84).to_rgb555());
     assert_eq!(result.bgp[2], Color::from_rgb(0x94, 0x3A, 0x3A).to_rgb555());
@@ -259,13 +263,35 @@ mod tests {
   }
 
   #[test]
+  fn get_loz_links_awakening_compatibility_palette() {
+    let mut rom = MockROM::new();
+    rom.expect_is_licensed_by_nintendo().once().return_const(true);
+    rom.expect_title_checksum().once().return_const(0x70);
+    rom.expect_fourth_title_letter().never();
+    let boxed_rom = Rc::new(RefCell::new(rom));
+    let result = CompatibilityPaletteLoader::get_compatibility_palettes(boxed_rom);
+    assert_eq!(result.bgp[0], Color::from_rgb(0xFF, 0xFF, 0xFF).to_rgb555());
+    assert_eq!(result.bgp[1], Color::from_rgb(0xFF, 0x84, 0x84).to_rgb555());
+    assert_eq!(result.bgp[2], Color::from_rgb(0x94, 0x3A, 0x3A).to_rgb555());
+    assert_eq!(result.bgp[3], Color::from_rgb(0x00, 0x00, 0x00).to_rgb555());
+    assert_eq!(result.obj0[0], Color::from_rgb(0xFF, 0xFF, 0xFF).to_rgb555());
+    assert_eq!(result.obj0[1], Color::from_rgb(0x00, 0xFF, 0x00).to_rgb555());
+    assert_eq!(result.obj0[2], Color::from_rgb(0x31, 0x84, 0x00).to_rgb555());
+    assert_eq!(result.obj0[3], Color::from_rgb(0x00, 0x4A, 0x00).to_rgb555());
+    assert_eq!(result.obj1[0], Color::from_rgb(0xFF, 0xFF, 0xFF).to_rgb555());
+    assert_eq!(result.obj1[1], Color::from_rgb(0x63, 0xA5, 0xFF).to_rgb555());
+    assert_eq!(result.obj1[2], Color::from_rgb(0x00, 0x00, 0xFF).to_rgb555());
+    assert_eq!(result.obj1[3], Color::from_rgb(0x00, 0x00, 0x00).to_rgb555());
+  }
+
+  #[test]
   fn get_kirby_dream_land_compatibility_palette() {
     let mut rom = MockROM::new();
     rom.expect_is_licensed_by_nintendo().once().return_const(true);
     rom.expect_title_checksum().once().return_const(0xB3);
     rom.expect_fourth_title_letter().once().return_const(0x42); // 'B'
-    let boxed_rom = Box::new(rom);
-    let result = CompatibilityPaletteLoader::get_compatibility_palettes(&(boxed_rom as Box<dyn MBC>));
+    let boxed_rom = Rc::new(RefCell::new(rom));
+    let result = CompatibilityPaletteLoader::get_compatibility_palettes(boxed_rom);
     assert_eq!(result.bgp[0], Color::from_rgb(0xA5, 0x9C, 0xFF).to_rgb555());
     assert_eq!(result.bgp[1], Color::from_rgb(0xFF, 0xFF, 0x00).to_rgb555());
     assert_eq!(result.bgp[2], Color::from_rgb(0x00, 0x63, 0x00).to_rgb555());

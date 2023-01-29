@@ -1,12 +1,13 @@
 use mockall::automock;
+
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct ObjectAttributes(u8);
 
 impl ObjectAttributes {
-  pub fn has_priority_over_oam(&self) -> bool {
+  pub fn render_bg_over_obj(&self) -> bool {
     self.0.get_bit(7)
   }
 
@@ -22,12 +23,12 @@ impl ObjectAttributes {
     self.0.get_bit(3) as u8
   }
 
-  pub fn palette_index(&self) -> u8 {
-    self.0 & 0x7
+  pub fn palette_index(&self, monochrome: bool) -> u8 {
+    if monochrome { self.0.get_bit(4) as u8 } else { self.0 & 0x7 }
   }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct OAMObject {
   pub lcd_y: u8,
   pub lcd_x: u8,
@@ -35,10 +36,16 @@ pub struct OAMObject {
   pub attributes: ObjectAttributes,
 }
 
+#[derive(Copy, Clone)]
+pub struct ObjectReference {
+  pub object_index: u8,
+  pub use_bottom_tile: bool
+}
+
 #[automock]
 pub trait OAM {
-  fn object_intersects_with_line(&self, object_index: u8, line: u8, use_8_x_16_tiles: bool) -> bool;
-  fn get_object(&self, object_index: u8) -> OAMObject;
+  fn get_object_reference_if_intersects(&self, object_index: u8, line: u8, use_8_x_16_tiles: bool) -> Option<ObjectReference>;
+  fn get_object(&self, object_reference: ObjectReference) -> OAMObject;
 }
 
 pub struct OAMImpl {
@@ -56,18 +63,40 @@ impl OAMImpl {
 }
 
 impl OAM for OAMImpl {
-  fn object_intersects_with_line(&self, object_index: u8, line: u8, use_8_x_16_tiles: bool) -> bool {
+  fn get_object_reference_if_intersects(&self, object_index: u8, line: u8, use_8_x_16_tiles: bool) -> Option<ObjectReference> {
     let object_lcd_y = self.bytes[4 * object_index as usize];
-    object_lcd_y <= line + 16 && object_lcd_y > (line + if use_8_x_16_tiles { 0 } else { 8 })
+    let top_tile_intersects = object_lcd_y - 16 <= line && object_lcd_y - 8 > line;
+    let bottom_tile_intersects = object_lcd_y - 16 <= line && object_lcd_y > line;
+    if top_tile_intersects {
+      Some(ObjectReference {
+        object_index,
+        use_bottom_tile: false
+      })
+    } else if use_8_x_16_tiles && bottom_tile_intersects {
+      Some(ObjectReference {
+        object_index,
+        use_bottom_tile: true
+      })
+    } else {
+      None
+    }
   }
 
-  fn get_object(&self, object_index: u8) -> OAMObject {
-    let byte_offset = 4 * object_index as usize;
+  fn get_object(&self, object_reference: ObjectReference) -> OAMObject {
+    let byte_offset = 4 * object_reference.object_index as usize;
     let object_bytes = &self.bytes[byte_offset..(byte_offset + 4)];
     OAMObject {
-      lcd_y: object_bytes[0],
+      lcd_y: if object_reference.use_bottom_tile {
+        object_bytes[0] + 8
+      } else {
+        object_bytes[0]
+      },
       lcd_x: object_bytes[1],
-      tile_index: object_bytes[2],
+      tile_index: if object_reference.use_bottom_tile {
+        object_bytes[2] + 1
+      } else {
+        object_bytes[2]
+      },
       attributes: ObjectAttributes(object_bytes[3]),
     }
   }

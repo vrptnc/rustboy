@@ -1,4 +1,4 @@
-use crate::memory::memory::Memory;
+use crate::memory::memory::{Memory, MemoryAddress};
 
 
 
@@ -31,7 +31,7 @@ impl Memory for WRAMImpl {
       WRAMImpl::DYNAMIC_BANK_START_ADDRESS..=WRAMImpl::END_ADDRESS => {
         self.bytes[(self.bank_index as u16 * WRAMImpl::BANK_SIZE + address - WRAMImpl::BANK_0_END_ADDRESS) as usize]
       },
-      0xFF70 => self.bank_index,
+      MemoryAddress::SVBK => self.bank_index,
       _ => panic!("Can't read address {} from WRAM", address)
     }
   }
@@ -44,7 +44,7 @@ impl Memory for WRAMImpl {
       WRAMImpl::DYNAMIC_BANK_START_ADDRESS..=WRAMImpl::END_ADDRESS => {
         self.bytes[(self.bank_index as u16 * WRAMImpl::BANK_SIZE + address - WRAMImpl::BANK_0_END_ADDRESS) as usize] = value;
       },
-      0xFF70 => {
+      MemoryAddress::SVBK => {
         self.bank_index = value & 0x07;
         if self.bank_index == 0 {
           self.bank_index = 1;

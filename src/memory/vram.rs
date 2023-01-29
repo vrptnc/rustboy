@@ -1,6 +1,8 @@
+use itertools::Either;
 use mockall::automock;
+use web_sys::console;
 use crate::memory::cram::ColorReference;
-use crate::memory::memory::Memory;
+use crate::memory::memory::{Memory, MemoryAddress};
 use crate::memory::oam::OAMObject;
 use crate::renderer::renderer::{Point, TileAddressingMode, TileMapIndex};
 use crate::util::bit_util::{BitUtil, ByteUtil};
@@ -43,13 +45,24 @@ pub struct TileData<'a> {
 
 impl<'a> TileData<'a> {
     pub fn get_color_indices(&self, row_offset: u8, flip_horizontal: bool, flip_vertical: bool) -> impl Iterator<Item=u8> + 'a {
-        let (byte1, byte2) = match (flip_horizontal, flip_vertical) {
-            (false, false) => (self.bytes[2 * row_offset as usize], self.bytes[2 * row_offset as usize + 1]),
-            (false, true) => (self.bytes[14 - 2 * row_offset as usize], self.bytes[15 - 2 * row_offset as usize]),
-            (true, false) => (self.bytes[2 * row_offset as usize + 1], self.bytes[2 * row_offset as usize]),
-            (true, true) => (self.bytes[15 - 2 * row_offset as usize], self.bytes[14 - 2 * row_offset as usize]),
+        // let (byte1, byte2) = match (flip_horizontal, flip_vertical) {
+        //     (false, false) => (self.bytes[2 * row_offset as usize], self.bytes[2 * row_offset as usize + 1]),
+        //     (false, true) => (self.bytes[14 - 2 * row_offset as usize], self.bytes[15 - 2 * row_offset as usize]),
+        //     (true, false) => (self.bytes[2 * row_offset as usize + 1], self.bytes[2 * row_offset as usize]),
+        //     (true, true) => (self.bytes[15 - 2 * row_offset as usize], self.bytes[14 - 2 * row_offset as usize]),
+        // };
+
+        let (byte1, byte2) = if flip_vertical {
+              (self.bytes[14 - 2 * row_offset as usize], self.bytes[15 - 2 * row_offset as usize])
+        } else {
+              (self.bytes[2 * row_offset as usize], self.bytes[2 * row_offset as usize + 1])
         };
-        byte1.interleave_with(byte2).crumbs().rev()
+        // byte1.interleave_with(byte2).crumbs().rev()
+        if flip_horizontal {
+            Either::Left(byte1.interleave_with(byte2).crumbs())
+        } else {
+            Either::Right(byte1.interleave_with(byte2).crumbs().rev())
+        }
     }
 }
 
@@ -84,21 +97,14 @@ pub struct TileMapView<'a> {
 }
 
 impl<'a> TileMapView<'a> {
-    const TILES_PER_ROW: u8 = 32;
-    const TILES_PER_COLUMN: u8 = 32;
-    const TILE_WIDTH: u8 = 8;
-    const TILE_HEIGHT: u8 = 8;
-    const TILES_PER_SCANLINE: u8 = 20;
-    const FRAME_ROWS: u8 = 144;
-    const FRAME_COLUMNS: u8 = 160;
+    const TILES_PER_ROW: usize = 32;
 
     pub fn row(&'a self, row: u8) -> impl Iterator<Item=Tile> + Clone + 'a {
-        let tile_offset = (row * TileMapView::TILES_PER_ROW) as usize;
-
+        let tile_offset = (row as usize * TileMapView::TILES_PER_ROW);
         (0..TileMapView::TILES_PER_ROW)
             .map(move |tile_index| Tile {
-                chr_code: self.bytes[0][tile_offset + tile_index as usize],
-                attributes: TileAttributes(self.bytes[1][tile_offset + tile_index as usize]),
+                chr_code: self.bytes[0][tile_offset + tile_index],
+                attributes: TileAttributes(self.bytes[1][tile_offset + tile_index]),
             })
     }
 }
@@ -107,6 +113,7 @@ impl<'a> TileMapView<'a> {
 pub struct ObjectParams {
     pub object: OAMObject,
     pub row: u8,
+    pub monochrome: bool
 }
 
 #[derive(Copy, Clone)]
@@ -140,7 +147,6 @@ pub struct VRAMImpl {
 impl VRAMImpl {
     const START_ADDRESS: u16 = 0x8000;
     const END_ADDRESS: u16 = 0x9FFF;
-    const BANK_INDEX_ADDRESS: u16 = 0xFF4F;
     const BANK_SIZE: usize = 0x2000;
 
     pub fn new() -> VRAMImpl {
@@ -182,8 +188,9 @@ impl VRAM for VRAMImpl {
         tile_data_view.get_tile_data(attributes.tile_bank_index(), tile_index)
             .get_color_indices(params.row, attributes.flip_horizontal(), attributes.flip_vertical())
             .map(|color_index | ColorReference {
+                foreground: !attributes.render_bg_over_obj(),
                 color_index,
-                palette_index: attributes.palette_index(),
+                palette_index: attributes.palette_index(params.monochrome),
             })
             .collect()
     }
@@ -194,10 +201,11 @@ impl VRAM for VRAMImpl {
 
         let tile_column_offset = params.viewport_position.x / 8;
         let pixel_column_offset = params.viewport_position.x % 8;
-        let pixel_row = (params.line + params.viewport_position.y) % 144;
+        let pixel_row = (params.line + params.viewport_position.y) % 255;
+        let tile_row = pixel_row / 8;
         let pixel_row_offset = pixel_row % 8;
 
-        tile_map.row(pixel_row)
+        tile_map.row(tile_row)
             .cycle()
             .skip(tile_column_offset as usize)
             .enumerate()
@@ -206,6 +214,7 @@ impl VRAM for VRAMImpl {
                 .get_color_indices(pixel_row_offset, attributes.flip_horizontal(), attributes.flip_vertical())
                 .skip(if tile_index == 0 { pixel_column_offset as usize } else { 0 })
                 .map(move |color_index| ColorReference {
+                    foreground: attributes.bg_and_window_priority_over_oam(),
                     color_index,
                     palette_index: attributes.palette_index(),
                 })
@@ -219,15 +228,17 @@ impl VRAM for VRAMImpl {
         let tile_data_view = self.tile_data(params.tile_addressing_mode);
 
         let pixel_row = params.line - params.window_position.y;
+        let tile_row = pixel_row / 8;
         let pixel_row_offset = pixel_row % 8;
         let window_pixel_column = params.window_position.x - 7;
         let pixels_to_draw = 160 - window_pixel_column;
 
-        tile_map.row(pixel_row)
+        tile_map.row(tile_row)
             .flat_map(|Tile { chr_code, attributes }| tile_data_view
                 .get_tile_data(attributes.tile_bank_index(), chr_code)
                 .get_color_indices(pixel_row_offset, attributes.flip_horizontal(), attributes.flip_vertical())
                 .map(move |color_index| ColorReference {
+                    foreground: false,
                     color_index,
                     palette_index: attributes.palette_index(),
                 })
@@ -243,7 +254,7 @@ impl Memory for VRAMImpl {
             VRAMImpl::START_ADDRESS..=VRAMImpl::END_ADDRESS => {
                 self.bytes[self.bank_index as usize][(address - VRAMImpl::START_ADDRESS) as usize]
             }
-            VRAMImpl::BANK_INDEX_ADDRESS => self.bank_index,
+            MemoryAddress::VBK => self.bank_index,
             _ => panic!("Can't read address {} from VRAM", address)
         }
     }
@@ -253,7 +264,7 @@ impl Memory for VRAMImpl {
             VRAMImpl::START_ADDRESS..=VRAMImpl::END_ADDRESS => {
                 self.bytes[self.bank_index as usize][(address - VRAMImpl::START_ADDRESS) as usize] = value
             }
-            VRAMImpl::BANK_INDEX_ADDRESS => self.bank_index = value & 0x01,
+            MemoryAddress::VBK => self.bank_index = value & 0x01,
             _ => panic!("Can't write to address {} in VRAM", address)
         }
     }
@@ -262,23 +273,19 @@ impl Memory for VRAMImpl {
 #[cfg(test)]
 pub mod tests {
     use assert_hex::assert_eq_hex;
+    use crate::memory::memory::MemoryAddress;
     use super::*;
 
     #[test]
     fn set_vram_bank() {
         let mut vram = VRAMImpl::new();
-        vram.write(VRAMImpl::BANK_INDEX_ADDRESS, 0);
+        vram.write(MemoryAddress::VBK, 0);
         vram.write(VRAMImpl::START_ADDRESS, 0xAB);
-        vram.write(VRAMImpl::BANK_INDEX_ADDRESS, 1);
+        vram.write(MemoryAddress::VBK, 1);
         vram.write(VRAMImpl::START_ADDRESS, 0xCD);
         assert_eq_hex!(vram.read(VRAMImpl::START_ADDRESS), 0xCD);
-        vram.write(VRAMImpl::BANK_INDEX_ADDRESS, 0);
+        vram.write(MemoryAddress::VBK, 0);
         assert_eq_hex!(vram.read(VRAMImpl::START_ADDRESS), 0xAB);
     }
-    //
-    // #[test]
-    // fn get_tile_data_view() {
-    //   let mut vram = VRAMImpl::new();
-    // }
 }
 

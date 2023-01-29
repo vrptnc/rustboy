@@ -1,5 +1,5 @@
 use crate::cpu::interrupts::{Interrupt, InterruptController};
-use crate::memory::memory::Memory;
+use crate::memory::memory::{Memory, MemoryAddress};
 use crate::util::bit_util::BitUtil;
 
 pub trait TimerController {
@@ -49,20 +49,20 @@ impl TimerController for TimerControllerImpl {
 impl Memory for TimerControllerImpl {
   fn read(&self, address: u16) -> u8 {
     match address {
-      0xFF04 => self.divider.get_upper_byte(),
-      0xFF05 => self.timer_counter,
-      0xFF06 => self.timer_modulo,
-      0xFF07 => self.timer_controller,
+      MemoryAddress::DIV => self.divider.get_upper_byte(),
+      MemoryAddress::TIMA => self.timer_counter,
+      MemoryAddress::TMA => self.timer_modulo,
+      MemoryAddress::TAC => self.timer_controller,
       _ => panic!("Can't read address {} on timer", address)
     }
   }
 
   fn write(&mut self, address: u16, value: u8) {
     match address {
-      0xFF04 => self.divider = 0,
-      0xFF05 => self.timer_counter = value,
-      0xFF06 => self.timer_modulo = value,
-      0xFF07 => {
+      MemoryAddress::DIV => self.divider = 0,
+      MemoryAddress::TIMA => self.timer_counter = value,
+      MemoryAddress::TMA => self.timer_modulo = value,
+      MemoryAddress::TAC => {
         self.enabled = value.get_bit(2);
         self.clock_pulse_bit = match value & 0x03 {
           0x00 => 10,
@@ -83,6 +83,7 @@ mod tests {
   use super::*;
   use test_case::test_case;
   use crate::cpu::interrupts::InterruptControllerImpl;
+  use crate::memory::memory::MemoryAddress;
 
   fn timer_ticks(timer: &mut dyn TimerController, interrupt_controller: &mut dyn InterruptController, ticks: usize) {
     for _ in 0..ticks {
@@ -96,7 +97,7 @@ mod tests {
     let mut timer = TimerControllerImpl::new();
     // It takes 64 ticks to increment the DIV register by one, so 320 ticks should increment it by 5
     timer_ticks(&mut timer, &mut interrupt_controller, 320);
-    assert_eq!(timer.read(0xFF04), 5);
+    assert_eq!(timer.read(MemoryAddress::DIV), 5);
   }
 
   #[test_case(0x04, 256; "Timer @ 4096 Hz")]
@@ -106,13 +107,13 @@ mod tests {
   fn read_tima(tac_register: u8, ticks_per_timer_increment: usize) {
     let mut interrupt_controller = InterruptControllerImpl::new();
     let mut timer = TimerControllerImpl::new();
-    timer.write(0xFF07, tac_register);
+    timer.write(MemoryAddress::TAC, tac_register);
     timer_ticks(&mut timer, &mut interrupt_controller, ticks_per_timer_increment - 1);
-    assert_eq!(timer.read(0xFF05), 0u8);
+    assert_eq!(timer.read(MemoryAddress::TIMA), 0u8);
     timer.tick(&mut interrupt_controller);
-    assert_eq!(timer.read(0xFF05), 1u8);
+    assert_eq!(timer.read(MemoryAddress::TIMA), 1u8);
     timer_ticks(&mut timer, &mut interrupt_controller, ticks_per_timer_increment);
-    assert_eq!(timer.read(0xFF05), 2u8);
+    assert_eq!(timer.read(MemoryAddress::TIMA), 2u8);
   }
 
   #[test_case(0x04, 0x10000; "4096 Hz")]
@@ -122,9 +123,9 @@ mod tests {
   fn timer_overflow(tac_register: u8, ticks_per_overflow: usize) {
     let mut interrupt_controller = InterruptControllerImpl::new();
     interrupt_controller.enable_interrupts();
-    interrupt_controller.write(0xFFFF, 0x04);
+    interrupt_controller.write(MemoryAddress::IE, 0x04);
     let mut timer = TimerControllerImpl::new();
-    timer.write(0xFF07, tac_register);
+    timer.write(MemoryAddress::TAC, tac_register);
     timer_ticks(&mut timer, &mut interrupt_controller, ticks_per_overflow - 1);
     assert!(interrupt_controller.get_requested_interrupt().is_none());
     timer.tick(&mut interrupt_controller);
@@ -142,11 +143,11 @@ mod tests {
   fn timer_modulo(tac_register: u8, ticks_per_overflow: usize) {
     let mut interrupt_controller = InterruptControllerImpl::new();
     let mut timer = TimerControllerImpl::new();
-    timer.write(0xFF06, 0xAB);
-    timer.write(0xFF07, tac_register);
+    timer.write(MemoryAddress::TMA, 0xAB);
+    timer.write(MemoryAddress::TAC, tac_register);
     timer_ticks(&mut timer, &mut interrupt_controller, ticks_per_overflow - 1);
-    assert_eq!(timer.read(0xFF05), 0xFF);
+    assert_eq!(timer.read(MemoryAddress::TIMA), 0xFF);
     timer.tick(&mut interrupt_controller);
-    assert_eq!(timer.read(0xFF05), 0xAB);
+    assert_eq!(timer.read(MemoryAddress::TIMA), 0xAB);
   }
 }

@@ -1,10 +1,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use mockall::automock;
-use crate::memory::memory::Memory;
+use crate::memory::memory::{Memory, MemoryAddress};
 use crate::util::bit_util::BitUtil;
-
-pub type InterruptControllerRef = Rc<RefCell<InterruptControllerImpl>>;
+use web_sys::console;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Interrupt {
@@ -36,14 +35,14 @@ impl Interrupt {
     }
   }
 
-  pub fn from_bit(bit: u8) -> Self {
+  pub fn from_bit(bit: u8) -> Option<Self> {
     match bit {
-      0 => Interrupt::VerticalBlank,
-      1 => Interrupt::Stat,
-      2 => Interrupt::TimerOverflow,
-      3 => Interrupt::SerialIOComplete,
-      4 => Interrupt::ButtonPressed,
-      _ => panic!("Can't map bit {} to Interrupt", bit)
+      0 => Some(Interrupt::VerticalBlank),
+      1 => Some(Interrupt::Stat),
+      2 => Some(Interrupt::TimerOverflow),
+      3 => Some(Interrupt::SerialIOComplete),
+      4 => Some(Interrupt::ButtonPressed),
+      _ => None
     }
   }
 }
@@ -83,7 +82,7 @@ impl InterruptController for InterruptControllerImpl {
       if masked_request == 0 {
         Option::None
       } else {
-        Option::Some(Interrupt::from_bit(masked_request.trailing_zeros() as u8))
+        Interrupt::from_bit(masked_request.trailing_zeros() as u8)
       }
     }
   }
@@ -101,6 +100,9 @@ impl InterruptController for InterruptControllerImpl {
   }
 
   fn request_interrupt(&mut self, interrupt: Interrupt) {
+    if let Interrupt::ButtonPressed = interrupt {
+      console::log_1(&"Button pressed".into())
+    }
     self.interrupt_request = self.interrupt_request.set_bit(interrupt.get_bit());
   }
 
@@ -112,16 +114,26 @@ impl InterruptController for InterruptControllerImpl {
 impl Memory for InterruptControllerImpl {
   fn read(&self, address: u16) -> u8 {
     match address {
-      0xFF0F => self.interrupt_request,
-      0xFFFF => self.interrupt_enable,
+      MemoryAddress::IF => self.interrupt_request,
+      MemoryAddress::IE => self.interrupt_enable,
+      MemoryAddress::IME => if self.interrupt_master_enable { 1 } else { 0 },
+      // Strictly speaking, address 0xFEA1 is in a prohibited address range, but this is a dirty hack to allow
+      // the CPU to get the requested interrupt efficiently through the memory bus.
+      MemoryAddress::RI => {
+
+        self.get_requested_interrupt().map(|interrupt| interrupt.get_bit()).unwrap_or(0xFF)
+      },
       _ => panic!("InterruptController can't read address {}", address)
     }
   }
 
   fn write(&mut self, address: u16, value: u8) {
     match address {
-      0xFF0F => self.interrupt_request = value,
-      0xFFFF => self.interrupt_enable = value,
+      MemoryAddress::IF => self.interrupt_request = value,
+      MemoryAddress::IE => self.interrupt_enable = value,
+      // Strictly speaking, address 0xFEA0 is not part of the GBC address range, but this is a dirty hack to allow
+      // the CPU to enable/disable interrupts through the memory bus.
+      MemoryAddress::IME => self.interrupt_master_enable = value != 0,
       _ => panic!("InterruptController can't write to address {}", address)
     }
   }
