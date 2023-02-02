@@ -1,4 +1,5 @@
 use mockall::automock;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::cpu::interrupts::{Interrupt, InterruptController};
 use crate::memory::memory::{Memory, MemoryAddress};
@@ -112,12 +113,13 @@ impl Memory for ButtonControllerImpl {
   }
 }
 
-enum ButtonType {
+pub enum ButtonType {
   ACTION,
   DIRECTION,
 }
 
 #[derive(Copy, Clone)]
+#[wasm_bindgen]
 pub enum Button {
   A,
   B,
@@ -189,6 +191,7 @@ mod tests {
     controller.write(MemoryAddress::P1, 0x20);
     controller.press_button(Button::A, &mut interrupt_controller);
     controller.press_button(Button::START, &mut interrupt_controller);
+    assert_eq_hex!(controller.read(MemoryAddress::P1), 0x2F);
     controller.release_button(Button::A);
     controller.release_button(Button::START);
     assert_eq_hex!(controller.read(MemoryAddress::P1), 0x2F);
@@ -207,6 +210,7 @@ mod tests {
     controller.write(MemoryAddress::P1, 0x10);
     controller.press_button(Button::RIGHT, &mut interrupt_controller);
     controller.press_button(Button::DOWN, &mut interrupt_controller);
+    assert_eq_hex!(controller.read(MemoryAddress::P1), 0x1F);
     controller.release_button(Button::RIGHT);
     controller.release_button(Button::DOWN);
     assert_eq_hex!(controller.read(MemoryAddress::P1), 0x1F);

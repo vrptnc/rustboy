@@ -1,21 +1,48 @@
 @import '../../styles/colors';
 
 .app {
+  display: grid;
+  box-sizing: border-box;
+  grid-template-areas:
+        "title title title"
+        "menu menu menu"
+        "gameboy object-debugger tile-debugger";
+  grid-template-rows: 1fr 1fr 1fr;
   height: 100%;
   width: 100%;
   padding: 15px;
   font-family: Roboto, Arial, sans-serif;
 }
 
+.title {
+  grid-area: title;
+}
+
 .button-wrapper {
   display: flex;
 }
 
-.visualizer {
+.gameboy {
+  grid-area: gameboy;
   display: block;
   position: relative;
-  margin-top: 20px;
 }
+
+.object-debugger {
+  grid-area: object-debugger;
+}
+
+.tile-debugger {
+  grid-area: tile-debugger;
+}
+
+.menu {
+  grid-area: menu;
+  display: flex;
+  flex-direction: row;
+  gap: 15px;
+}
+
 
 #main-canvas {
   position: absolute;
@@ -25,10 +52,25 @@
   width: 215px;
 }
 
+#object-canvas {
+  background-color: #6f776f;
+  width: 160px;
+  border: 1px solid black;
+}
+
+#tile-canvas {
+  background-color: #a3b0a3;
+  width: 256px;
+  border: 1px solid black;
+}
+
 .button {
   display: block;
   cursor: pointer;
   padding: 8px;
+  &:not(:first-child) {
+    margin-left: 20px;
+  }
   background-color: $button-color;
   color: white;
 

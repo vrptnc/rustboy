@@ -36,6 +36,22 @@ impl PartialEq for Color {
 }
 
 impl Color {
+  pub fn white() -> Color {
+    Color::from_rgb(0x1F, 0x1F, 0x1F)
+  }
+
+  pub fn black() -> Color {
+    Color::from_rgb(0, 0, 0)
+  }
+
+  pub fn light_grey() -> Color {
+    Color::from_rgb(0xA, 0xA, 0xA)
+  }
+
+  pub fn dark_grey() -> Color {
+    Color::from_rgb(0x15, 0x15, 0x15)
+  }
+
   pub fn from_word(color_word: u16) -> Color {
     Color {
       red: (color_word & 0x1F) as u8,
@@ -102,6 +118,6 @@ impl Color {
 
 #[automock]
 pub trait Renderer {
-  fn draw_pixel(&mut self, x: u8, y: u8, color: Color, drawing_priority: u8);
+  fn draw_pixel(&mut self, x: usize, y: usize, color: Color, drawing_priority: u8);
   fn flush(&mut self);
 }

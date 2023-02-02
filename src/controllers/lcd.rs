@@ -4,7 +4,6 @@ use std::rc::Rc;
 
 use closure::closure;
 use mockall::automock;
-use web_sys::console;
 
 use crate::cpu::interrupts::{Interrupt, InterruptController};
 use crate::memory::cram::CRAM;
@@ -130,15 +129,7 @@ pub struct LCDControllerImpl {
 
 impl LCDController for LCDControllerImpl {
   fn get_mode(&self) -> LCDMode {
-    if self.line >= 144 {
-      LCDMode::VBlank
-    } else {
-      match self.column {
-        0..=79 => LCDMode::Mode2,
-        80..=247 => LCDMode::Mode3,
-        _ => LCDMode::HBlank
-      }
-    }
+    self.mode
   }
 }
 
@@ -153,7 +144,7 @@ impl LCDControllerImpl {
       line_rendered: false,
       column: 0,
       mode: LCDMode::Mode2,
-      lcdc: LCDC(0),
+      lcdc: LCDC(0x91),
       stat: Stat(0x02), // TODO: Implement writing these registers correctly
       interrupt_line: false,
       opri: 0,
@@ -165,18 +156,30 @@ impl LCDControllerImpl {
     }
   }
 
+  pub fn use_8_x_16_tiles(&self) -> bool {
+    self.lcdc.use_8_x_16_tiles()
+  }
+
   fn find_intersecting_objects(&mut self, oam: &dyn OAM) {
     let use_8_x_16_tiles = self.lcdc.use_8_x_16_tiles();
-    let object_index_for_dot = ((self.dot % 456) / 2) as u8;
-    while self.current_object_index <= object_index_for_dot && self.intersecting_object_references.len() < 10 {
-      if let Some(object_reference) = oam.get_object_reference_if_intersects(self.current_object_index, self.line, use_8_x_16_tiles) {
+    if self.intersecting_object_references.len() < 10 && self.column % 4 == 0 {
+      let object_index = (self.column / 2) as u8;
+      if let Some(object_reference) = oam.get_object_reference_if_intersects(object_index, self.line, use_8_x_16_tiles) {
         self.intersecting_object_references.push(object_reference);
       }
-      self.current_object_index += if use_8_x_16_tiles { 2 } else { 1 };
+      if self.intersecting_object_references.len() < 10 {
+        if let Some(object_reference) = oam.get_object_reference_if_intersects(object_index + 1, self.line, use_8_x_16_tiles) {
+          self.intersecting_object_references.push(object_reference);
+        }
+      }
     }
   }
 
   fn draw_background_line(&self, vram: &dyn VRAM, cram: &dyn CRAM, renderer: &mut dyn Renderer) {
+    // Don't draw the background line of we're in monochrome mode and bg_proprity bit is cleared
+    if self.opri == 1 && !self.lcdc.bg_priority() {
+      return;
+    }
     let color_references = vram.background_line_colors(BackgroundParams {
       tile_map_index: self.lcdc.bg_tile_map_index(),
       tile_addressing_mode: self.lcdc.bg_and_window_tile_addressing_mode(),
@@ -193,19 +196,19 @@ impl LCDControllerImpl {
         let bg_drawing_priority = if color_ref.color_index == 0 || !self.lcdc.bg_priority() {
           0
         } else if color_ref.foreground {
-          4
+          6
         } else {
-          2
+          3
         };
-        renderer.draw_pixel(x as u8, self.line, color, bg_drawing_priority)
+        renderer.draw_pixel(x, self.line as usize, color, bg_drawing_priority)
       });
   }
 
   fn should_draw_window_line(&self) -> bool {
-    self.wy >= self.line &&
-      self.wy < 144 &&
-      self.wx >= 7 &&
-      self.wx - 7 < 160
+    (self.opri == 0 || self.lcdc.bg_priority()) &&
+      self.wy <= self.line &&
+      self.wy <= 143 &&
+      self.wx <= 166
   }
 
   fn draw_window_line(&self, vram: &dyn VRAM, cram: &dyn CRAM, renderer: &mut dyn Renderer) {
@@ -220,15 +223,25 @@ impl LCDControllerImpl {
         },
       });
       color_references.into_iter()
-        .map(|color_ref| if self.opri == 1 { cram.monochrome_background_color(color_ref) } else { cram.background_color(color_ref) })
+        .map(|color_ref| {
+          let color = if self.opri == 1 {
+            cram.monochrome_background_color(color_ref)
+          } else {
+            cram.background_color(color_ref)
+          };
+          (color_ref, color)
+        })
         .enumerate()
-        .for_each(|(x, color)| renderer.draw_pixel(x as u8 + self.wx - 7, self.line, color, 5));
+        .skip(if self.wx < 7 { 7 - self.wx as usize } else { 0 })
+        .for_each(|(x, (color_ref, color))| {
+          renderer.draw_pixel(x + self.wx as usize - 7, self.line as usize, color, 0xFF);
+        });
     }
   }
 
   fn draw_obj_line(&self, vram: &dyn VRAM, cram: &dyn CRAM, oam: &dyn OAM, renderer: &mut dyn Renderer) {
     let mut objects: Vec<OAMObject> = self.intersecting_object_references.iter()
-      .map(|object_reference| oam.get_object(*object_reference))
+      .map(|object_reference| oam.get_object(*object_reference, self.lcdc.use_8_x_16_tiles()))
       .collect();
     if self.opri == 1 {
       objects.sort_by(|a, b| {
@@ -242,34 +255,95 @@ impl LCDControllerImpl {
       });
     }
 
-    objects.into_iter().for_each(|object| {
-      let params = ObjectParams {
-        object,
-        row: self.line + 16 - object.lcd_y,
-        monochrome: self.opri == 1,
-      };
-      let colors = vram.object_line_colors(params);
-      colors.into_iter()
-        .map(|color_ref| (color_ref, if self.opri == 1 { cram.monochrome_object_color(color_ref) } else { cram.object_color(color_ref) }))
-        .enumerate()
-        .for_each(|(pixel_offset, (color_ref, color))| {
-          let obj_drawing_priority = if color_ref.foreground {
-            3
-          } else {
-            1
-          };
-          renderer.draw_pixel(object.lcd_x + pixel_offset as u8, self.line, color, obj_drawing_priority);
-        });
-    });
+    objects.into_iter()
+      .filter(|object| object.lcd_x != 0 && object.lcd_x <= 168)
+      .for_each(|object| {
+        let params = ObjectParams {
+          object,
+          row: self.line + 16 - object.lcd_y,
+          monochrome: self.opri == 1,
+        };
+        let colors = vram.object_line_colors(params);
+        colors.into_iter()
+          .map(|color_ref| (color_ref, if self.opri == 1 { cram.monochrome_object_color(color_ref) } else { cram.object_color(color_ref) }))
+          .enumerate()
+          .skip(if object.lcd_x < 8 { 8 - object.lcd_x } else { 0 } as usize)
+          .take(if object.lcd_x > 160 { 168 - object.lcd_x } else { 8 } as usize)
+          .for_each(|(pixel_offset, (color_ref, color))| {
+            let obj_drawing_priority = if color_ref.foreground {
+              5
+            } else {
+              2
+            };
+            renderer.draw_pixel(object.lcd_x as usize + pixel_offset - 8, self.line as usize, color, obj_drawing_priority);
+          });
+      });
   }
 
-  fn draw_line(&self, vram: &dyn VRAM, cram: &dyn CRAM, oam: &dyn OAM, renderer: &mut dyn Renderer) {
-    // 1) Draw background
+  fn draw_obj_atlas_line(&self, vram: &dyn VRAM, cram: &dyn CRAM, oam: &dyn OAM, renderer: &mut dyn Renderer) {
+    if self.line < 32 {
+      let row = self.line % 8;
+      let object_range = if self.line < 8 || (self.line < 16 && self.lcdc.use_8_x_16_tiles()) {
+        (0..20u8)
+      } else if self.line < 24 || (self.line < 32 && self.lcdc.use_8_x_16_tiles()) {
+        (20..40u8)
+      } else {
+        (0..0u8)
+      };
+      object_range.into_iter()
+        .for_each(|object_index| {
+          let object = oam.get_object(ObjectReference {
+            object_index,
+            use_bottom_tile: (self.line % 16) > 7,
+          }, self.lcdc.use_8_x_16_tiles());
+          let params = ObjectParams {
+            object,
+            row,
+            monochrome: self.opri == 1,
+          };
+          let column_offset = (object_index % 20) * 8;
+          let colors = vram.object_line_colors(params);
+          colors.into_iter()
+            .map(|color_ref| (color_ref, if self.opri == 1 { cram.monochrome_object_color(color_ref) } else { cram.object_color(color_ref) }))
+            .enumerate()
+            .for_each(|(pixel_offset, (color_ref, color))| {
+              renderer.draw_pixel(column_offset as usize + pixel_offset, self.line as usize, color, 5);
+            });
+        })
+    }
+  }
+
+  fn draw_tile_atlas_line(&self, vram: &dyn VRAM, renderer: &mut dyn Renderer) {
+    if self.line == 0 {
+      (0..192u8)
+        .map(|line| (line, vram.tile_atlas_line_colors(line)))
+        .for_each(|(line, colors)| {
+          colors.into_iter()
+            .map(|color_ref| match color_ref {
+              0 => Color::white(),
+              1 => Color::light_grey(),
+              2 => Color::dark_grey(),
+              _ => Color::black()
+            })
+            .enumerate()
+            .for_each(|(pixel_offset, color)| {
+              renderer.draw_pixel(pixel_offset, line as usize, color, 5);
+            });
+        });
+    }
+  }
+
+  fn draw_line(&self, vram: &dyn VRAM, cram: &dyn CRAM, oam: &dyn OAM, renderer: &mut dyn Renderer, obj_renderer: &mut dyn Renderer, tile_renderer: &mut dyn Renderer) {
+    // // 1) Draw background
     self.draw_background_line(vram, cram, renderer);
-    // 2) Draw window line
+    // // 2) Draw window line
     self.draw_window_line(vram, cram, renderer);
     // 3) Draw OBJ
     self.draw_obj_line(vram, cram, oam, renderer);
+    // 4) Draw OBJ atlas
+    self.draw_obj_atlas_line(vram, cram, oam, obj_renderer);
+    // 5) Draw Tile atlas
+    self.draw_tile_atlas_line(vram, tile_renderer);
   }
 
   fn update_mode(&mut self) {
@@ -296,7 +370,10 @@ impl LCDControllerImpl {
   }
 
   pub fn tick(&mut self, vram: &dyn VRAM, cram: &dyn CRAM, oam: &dyn OAM,
-              renderer: &mut dyn Renderer, interrupt_controller: &mut dyn InterruptController,
+              renderer: &mut dyn Renderer,
+              obj_renderer: &mut dyn Renderer,
+              tile_renderer: &mut dyn Renderer,
+              interrupt_controller: &mut dyn InterruptController,
               double_speed: bool) {
     /*
      * The LCD works with a dot clock, that ticks at the clock frequency.
@@ -324,6 +401,8 @@ impl LCDControllerImpl {
         if self.column == 0 && self.line == 144 {
           interrupt_controller.request_interrupt(Interrupt::VerticalBlank);
           renderer.flush();
+          obj_renderer.flush();
+          tile_renderer.flush();
         }
       }
       LCDMode::Mode2 => {
@@ -333,7 +412,7 @@ impl LCDControllerImpl {
       LCDMode::Mode3 => {
         // TODO Examine whether drawing the entire line at once is the best way to go, maybe we should draw it progressively
         if !self.line_rendered {
-          self.draw_line(vram, cram, oam, renderer);
+          self.draw_line(vram, cram, oam, renderer, obj_renderer, tile_renderer);
           self.line_rendered = true;
         }
       }
@@ -388,6 +467,8 @@ pub mod tests {
   fn stat_blocking() {
     let mut controller = LCDControllerImpl::new(CGBMode::Color);
     let mut renderer = MockRenderer::new();
+    let mut obj_renderer = MockRenderer::new();
+    let mut tile_renderer = MockRenderer::new();
     let mut interrupt_controller = MockInterruptController::new();
     interrupt_controller.expect_request_interrupt().never();
     let vram = MockVRAM::new();
@@ -396,14 +477,14 @@ pub mod tests {
     oam.expect_get_object_reference_if_intersects().return_const(None);
     // Advance to right before HBlank
     for _ in 0..248 {
-      controller.tick(&vram, &cram, &oam, &mut renderer, &mut interrupt_controller, false);
+      controller.tick(&vram, &cram, &oam, &mut renderer, &mut obj_renderer, &mut tile_renderer, &mut interrupt_controller, false);
     }
     controller.write(MemoryAddress::STAT, 0x28); // Enable STAT interrupt for Mode 2 and HBlank
     interrupt_controller.expect_request_interrupt().with(eq(Interrupt::Stat)).once();
-    controller.tick(&vram, &cram, &oam, &mut renderer, &mut interrupt_controller, false); // Enter HBlank
+    controller.tick(&vram, &cram, &oam, &mut renderer, &mut obj_renderer, &mut tile_renderer, &mut interrupt_controller, false); // Enter HBlank
     // Advance to well within Mode 2 of the next line. No additional interrupt should be requested due to STAT blocking
     for _ in 249..500 {
-      controller.tick(&vram, &cram, &oam, &mut renderer, &mut interrupt_controller, false);
+      controller.tick(&vram, &cram, &oam, &mut renderer, &mut obj_renderer, &mut tile_renderer, &mut interrupt_controller, false);
     }
   }
 }

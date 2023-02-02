@@ -1,12 +1,19 @@
 use mockall::automock;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
 
+#[wasm_bindgen]
 #[derive(Copy, Clone, Debug)]
 pub struct ObjectAttributes(u8);
 
+#[wasm_bindgen]
 impl ObjectAttributes {
+  pub fn value(&self) -> u8 {
+    self.0
+  }
+
   pub fn render_bg_over_obj(&self) -> bool {
     self.0.get_bit(7)
   }
@@ -28,6 +35,7 @@ impl ObjectAttributes {
   }
 }
 
+#[wasm_bindgen]
 #[derive(Copy, Clone, Debug)]
 pub struct OAMObject {
   pub lcd_y: u8,
@@ -45,7 +53,7 @@ pub struct ObjectReference {
 #[automock]
 pub trait OAM {
   fn get_object_reference_if_intersects(&self, object_index: u8, line: u8, use_8_x_16_tiles: bool) -> Option<ObjectReference>;
-  fn get_object(&self, object_reference: ObjectReference) -> OAMObject;
+  fn get_object(&self, object_reference: ObjectReference, use_8_x_16_tiles: bool) -> OAMObject;
 }
 
 pub struct OAMImpl {
@@ -82,9 +90,10 @@ impl OAM for OAMImpl {
     }
   }
 
-  fn get_object(&self, object_reference: ObjectReference) -> OAMObject {
+  fn get_object(&self, object_reference: ObjectReference, use_8_x_16_tiles: bool) -> OAMObject {
     let byte_offset = 4 * object_reference.object_index as usize;
     let object_bytes = &self.bytes[byte_offset..(byte_offset + 4)];
+    let attributes = ObjectAttributes(object_bytes[3]);
     OAMObject {
       lcd_y: if object_reference.use_bottom_tile {
         object_bytes[0] + 8
@@ -92,12 +101,19 @@ impl OAM for OAMImpl {
         object_bytes[0]
       },
       lcd_x: object_bytes[1],
-      tile_index: if object_reference.use_bottom_tile {
-        object_bytes[2] + 1
+      tile_index: if use_8_x_16_tiles {
+        let top_tile_index = (object_bytes[2] & 0xFE);
+        let bottom_tile_index = top_tile_index + 1;
+        match (object_reference.use_bottom_tile, attributes.flip_vertical()) {
+          (false, false) => top_tile_index,
+          (false, true) => bottom_tile_index,
+          (true, false) => bottom_tile_index,
+          (true, true) => top_tile_index
+        }
       } else {
         object_bytes[2]
       },
-      attributes: ObjectAttributes(object_bytes[3]),
+      attributes,
     }
   }
 }

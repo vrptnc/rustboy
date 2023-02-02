@@ -39,7 +39,7 @@ pub struct CRAMImpl {
 impl CRAMImpl {
   pub fn new() -> CRAMImpl {
     CRAMImpl {
-      monochrome_background_palette: 0xE4,
+      monochrome_background_palette: 0xFC,
       monochrome_object_palette_0: 0xE4,
       monochrome_object_palette_1: 0xE4,
       background_palette_index: 0,
@@ -52,7 +52,6 @@ impl CRAMImpl {
 
 impl CRAM for CRAMImpl {
   fn write_compatibility_palettes(&mut self, compatibility_palettes: CompatibilityPalettes) {
-    console::log_1(&format!("CP: {:?}", compatibility_palettes).into());
     compatibility_palettes.bgp.into_iter()
       .enumerate()
       .for_each(|(color_index, color)| {
@@ -85,12 +84,10 @@ impl CRAM for CRAMImpl {
     if color_ref.color_index == 0 {
       return Color::transparent();
     }
-    let real_color_index = (self.monochrome_background_palette >> (2 * color_ref.color_index)) & 0x3;
-    self.object_color(ColorReference {
-      palette_index: color_ref.palette_index,
-      color_index: real_color_index,
-      foreground: color_ref.foreground
-    })
+    let real_color_index = (if color_ref.palette_index == 0 { self.monochrome_object_palette_0 } else { self.monochrome_object_palette_1 } >> (2 * color_ref.color_index)) & 0x3;
+    let lower_byte_address = (8 * color_ref.palette_index + 2 * real_color_index) as usize;
+    let color_word = (&self.object_palettes[lower_byte_address..=lower_byte_address + 1]).read_u16::<LittleEndian>().unwrap();
+    Color::from_word(color_word)
   }
 
   fn object_color(&self, color_ref: ColorReference) -> Color {

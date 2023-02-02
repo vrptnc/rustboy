@@ -8,12 +8,12 @@ use wasm_bindgen::prelude::wasm_bindgen;
 use web_sys::console;
 
 use crate::controllers::audio::AudioControllerImpl;
-use crate::controllers::buttons::ButtonControllerImpl;
+use crate::controllers::buttons::{Button, ButtonController, ButtonControllerImpl};
 use crate::controllers::dma::{DMAController, DMAControllerImpl};
 use crate::controllers::lcd::LCDControllerImpl;
 use crate::controllers::speed::{SpeedController, SpeedControllerImpl};
 use crate::controllers::timer::{TimerController, TimerControllerImpl};
-use crate::cpu::cpu::{CPU, CPUImpl};
+use crate::cpu::cpu::{CPU, CPUImpl, CPUInfo};
 use crate::cpu::interrupts::InterruptControllerImpl;
 use crate::emulator::compatibility_palette::CompatibilityPaletteLoader;
 use crate::memory::bus::MemoryBus;
@@ -28,7 +28,7 @@ use crate::memory::mbc3::MBC3;
 use crate::memory::mbc5::MBC5;
 use crate::memory::mbc::MBC;
 use crate::memory::memory::{CGBMode, Memory, MemoryAddress, RAMSize, ROMSize};
-use crate::memory::oam::OAMImpl;
+use crate::memory::oam::{OAM, OAMImpl, OAMObject, ObjectReference};
 use crate::memory::stack::Stack;
 use crate::memory::unmapped::UnmappedMemory;
 use crate::memory::vram::VRAMImpl;
@@ -49,6 +49,8 @@ pub struct Emulator {
   timer: TimerControllerImpl,
   dma: DMAControllerImpl,
   renderer: CanvasRenderer,
+  obj_renderer: CanvasRenderer,
+  tile_renderer: CanvasRenderer,
   interrupt_controller: InterruptControllerImpl,
   speed_controller: SpeedControllerImpl,
   button_controller: ButtonControllerImpl,
@@ -76,7 +78,8 @@ impl Emulator {
     let wram = WRAMImpl::new();
     let oam = OAMImpl::new();
     let mut lcd = LCDControllerImpl::new(cgb_mode);
-    let timer = TimerControllerImpl::new();
+    let mut timer = TimerControllerImpl::new();
+    timer.write(MemoryAddress::TAC, 0xF8);
     let dma = DMAControllerImpl::new();
     let button_controller = ButtonControllerImpl::new();
     let audio_controller = AudioControllerImpl::new();
@@ -86,7 +89,9 @@ impl Emulator {
     let reserved_area_2 = LinearMemory::<0x0060, 0xFEA0>::new();
     let interrupt_controller = InterruptControllerImpl::new();
     let speed_controller = SpeedControllerImpl::new();
-    let renderer = CanvasRenderer::new();
+    let renderer = CanvasRenderer::new("main-canvas", Color::white(), 160, 144);
+    let tile_renderer = CanvasRenderer::new("tile-canvas", Color::transparent(), 256, 192);
+    let obj_renderer = CanvasRenderer::new("object-canvas", Color::transparent(), 160, 32);
     let unmapped_memory = UnmappedMemory::new();
 
     // If we're in compatibility/color mode, write the compatibility flag as is to KEY0
@@ -122,7 +127,9 @@ impl Emulator {
       interrupt_controller,
       speed_controller,
       renderer,
-      unmapped_memory,
+      obj_renderer,
+      tile_renderer,
+      unmapped_memory
     }
   }
 
@@ -144,6 +151,25 @@ impl Emulator {
     };
     (*rom).borrow_mut().load_bytes(0x0000, rom_bytes);
     rom
+  }
+
+  pub fn press_button(&mut self, button: Button) {
+    self.button_controller.press_button(button, &mut self.interrupt_controller);
+  }
+
+  pub fn release_button(&mut self, button: Button) {
+    self.button_controller.release_button(button);
+  }
+
+  pub fn cpu_info(&self) -> CPUInfo {
+    self.cpu.cpu_info()
+  }
+
+  pub fn get_object(&self, object_index: u8) -> OAMObject {
+    self.oam.get_object(ObjectReference {
+      object_index,
+      use_bottom_tile: false
+    }, self.lcd.use_8_x_16_tiles())
   }
 
   pub fn tick(&mut self, delta_nanos: u64) {
@@ -175,7 +201,7 @@ impl Emulator {
       self.speed_controller.tick(&mut self.cpu);
       self.button_controller.tick(&mut self.interrupt_controller);
       self.timer.tick(&mut self.interrupt_controller);
-      self.lcd.tick(&self.vram, &self.cram, &self.oam, &mut self.renderer, &mut self.interrupt_controller, double_speed);
+      self.lcd.tick(&self.vram, &self.cram, &self.oam, &mut self.renderer, &mut self.obj_renderer, &mut self.tile_renderer, &mut self.interrupt_controller, double_speed);
       let mut dma_memory_bus = DMAMemoryBus {
         rom: Rc::clone(&self.rom),
         vram: &mut self.vram,

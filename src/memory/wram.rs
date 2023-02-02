@@ -1,7 +1,5 @@
 use crate::memory::memory::{Memory, MemoryAddress};
 
-
-
 pub struct WRAMImpl {
   bytes: [u8; (8 * WRAMImpl::BANK_SIZE) as usize],
   bank_index: u8

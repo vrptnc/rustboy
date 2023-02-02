@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use mockall::automock;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::cpu::decoder::{InstructionDecoder, InstructionScheduler};
 use crate::cpu::instruction::{ByteArithmeticParams, ByteCastingParams, ByteLocation, ByteLogicParams, ByteOperationParams, ByteRotationParams, ByteShiftParams, Instruction, WordArithmeticParams, WordLocation, WordOperationParams};
@@ -20,6 +21,21 @@ pub trait CPU {
   fn disable(&mut self);
   fn stopped(&self) -> bool;
   fn resume(&mut self);
+  fn cpu_info(&self) -> CPUInfo;
+}
+
+#[wasm_bindgen]
+#[derive(Copy, Clone, Debug)]
+pub struct CPUInfo {
+  pub AF: u16,
+  pub BC: u16,
+  pub DE: u16,
+  pub HL: u16,
+  pub SP: u16,
+  pub PC: u16,
+  pub stopped: bool,
+  pub enabled: bool,
+
 }
 
 struct InstructionContext {
@@ -37,6 +53,19 @@ pub struct CPUImpl {
 }
 
 impl CPU for CPUImpl {
+  fn cpu_info(&self) -> CPUInfo {
+    CPUInfo {
+      AF: self.registers.read_word(WordRegister::AF),
+      BC: self.registers.read_word(WordRegister::BC),
+      DE: self.registers.read_word(WordRegister::DE),
+      HL: self.registers.read_word(WordRegister::HL),
+      SP: self.registers.read_word(WordRegister::SP),
+      PC: self.registers.read_word(WordRegister::PC),
+      stopped: self.stopped,
+      enabled: self.enabled
+    }
+  }
+
   fn enabled(&self) -> bool {
     self.enabled
   }
@@ -236,7 +265,7 @@ impl CPUImpl {
     }
   }
 
-  fn read_word(&mut self, location: WordLocation) -> u16 {
+  fn read_word(&self, location: WordLocation) -> u16 {
     match location {
       WordLocation::Value(value) => value,
       WordLocation::Register(register) => self.registers.read_word(register),

@@ -66,7 +66,7 @@ pub struct InterruptControllerImpl {
 impl InterruptControllerImpl {
   pub fn new() -> InterruptControllerImpl {
     InterruptControllerImpl {
-      interrupt_request: 0,
+      interrupt_request: 0xE1,
       interrupt_enable: 0,
       interrupt_master_enable: false,
     }
@@ -100,9 +100,6 @@ impl InterruptController for InterruptControllerImpl {
   }
 
   fn request_interrupt(&mut self, interrupt: Interrupt) {
-    if let Interrupt::ButtonPressed = interrupt {
-      console::log_1(&"Button pressed".into())
-    }
     self.interrupt_request = self.interrupt_request.set_bit(interrupt.get_bit());
   }
 

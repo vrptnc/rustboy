@@ -25,7 +25,7 @@ impl<'a> Memory for DMAMemoryBus<'a> {
   fn write(&mut self, address: u16, value: u8) {
     match address {
       0x8000..=0x9FFF => self.vram.write(address, value),
-      0xFE00..=0xFEBF => self.oam.write(address, value),
+      0xFE00..=0xFE9F => self.oam.write(address, value),
       _ => panic!("DMABus can't write to address {}", address)
 
     }
