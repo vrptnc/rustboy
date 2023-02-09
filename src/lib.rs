@@ -9,6 +9,7 @@ mod cpu;
 mod controllers;
 mod time;
 mod infrastructure;
+mod audio;
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;

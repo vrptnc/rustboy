@@ -30,6 +30,9 @@
 
 .object-debugger {
   grid-area: object-debugger;
+  display: flex;
+  flex-direction: column;
+  row-gap: 20px;
 }
 
 .tile-debugger {
@@ -53,8 +56,14 @@
 }
 
 #object-canvas {
-  background-color: #6f776f;
+  background-color: #a3b0a3;
   width: 160px;
+  border: 1px solid black;
+}
+
+#oscilloscope-canvas {
+  background-color: white;
+  width: 200px;
   border: 1px solid black;
 }
 

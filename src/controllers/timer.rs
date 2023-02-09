@@ -4,6 +4,7 @@ use crate::util::bit_util::BitUtil;
 
 pub trait TimerController {
   fn tick(&mut self, interrupt_controller: &mut dyn InterruptController);
+  fn get_divider(&self) -> u16;
 }
 
 pub struct TimerControllerImpl {
@@ -43,6 +44,10 @@ impl TimerController for TimerControllerImpl {
         }
       }
     }
+  }
+
+  fn get_divider(&self) -> u16 {
+    self.divider
   }
 }
 

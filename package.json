@@ -4,11 +4,11 @@
   "description": "Basic React frontend for the Rustboy WASM emulator",
   "main": "index.js",
   "scripts": {
-    "clean": "rimraf dist",
-    "prod:build": "npm run clean && webpack --mode production --config webpack.config.prod.js",
+    "clean": "node_modules/.bin/rimraf dist",
+    "prod:build": "npm run clean && node_modules/.bin/webpack --mode production --config webpack.config.prod.js",
     "dev:build": "NODE_ENV=development webpack --mode development",
-    "dev:start": "npm run dev:build && webpack serve",
-    "test": "jest"
+    "dev:start": "npm run clean && npm run dev:build && node_modules/.bin/webpack serve",
+    "test": "node_modules/.bin/jest"
   },
   "repository": {
     "type": "git",
@@ -24,6 +24,7 @@
     "@babel/preset-typescript": "^7.13.0",
     "@types/react": "^17.0.3",
     "@types/react-dom": "^17.0.2",
+    "@wasm-tool/wasm-pack-plugin": "^1.6.0",
     "archiver": "^5.3.0",
     "babel-loader": "^8.2.2",
     "babel-plugin-transform-class-properties": "^6.24.1",

@@ -1,6 +1,10 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+const CopyWebpackPlugin = require('copy-webpack-plugin')
 const TsconfigPathsPlugin = require('tsconfig-paths-webpack-plugin')
+const WasmPackWebpackPlugin = require('@wasm-tool/wasm-pack-plugin')
+
+const dist = path.resolve(__dirname, 'dist')
 
 module.exports = {
     experiments: {
@@ -12,12 +16,12 @@ module.exports = {
     },
     devtool: 'eval-cheap-module-source-map',
     devServer: {
-        contentBase: path.join(__dirname, 'dist'),
+        contentBase: dist,
         port: 9000,
         historyApiFallback: true
     },
     entry: {
-        index: './src/index.tsx'
+        index: './js/index.tsx'
     },
     target: 'web',
     module: {
@@ -41,12 +45,20 @@ module.exports = {
         ]
     },
     output: {
-        path: path.resolve(__dirname, './dist'),
+        path: dist,
         filename: '[name].js'
     },
     plugins: [
         new HtmlWebpackPlugin({
-            template: 'src/index.html'
+            template: 'static/index.html'
+        }),
+        new CopyWebpackPlugin({
+            patterns: [
+                {from: '*.js', context: path.resolve(__dirname, 'static')}
+            ]
+        }),
+        new WasmPackWebpackPlugin({
+            crateDirectory: __dirname
         })
     ]
 }

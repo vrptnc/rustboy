@@ -6,6 +6,8 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_sys::console;
+use crate::audio::audio_driver::{AudioDriver, Channel, DutyCycle};
+use crate::audio::web_audio_driver::WebAudioDriver;
 
 use crate::controllers::audio::AudioControllerImpl;
 use crate::controllers::buttons::{Button, ButtonController, ButtonControllerImpl};
@@ -60,6 +62,7 @@ pub struct Emulator {
   reserved_area_1: LinearMemory::<0x1E00, 0xE000>,
   reserved_area_2: LinearMemory::<0x0060, 0xFEA0>,
   unmapped_memory: UnmappedMemory,
+  audio_driver: WebAudioDriver
 }
 
 #[wasm_bindgen]
@@ -93,6 +96,7 @@ impl Emulator {
     let tile_renderer = CanvasRenderer::new("tile-canvas", Color::transparent(), 256, 192);
     let obj_renderer = CanvasRenderer::new("object-canvas", Color::transparent(), 160, 32);
     let unmapped_memory = UnmappedMemory::new();
+    let mut audio_driver = WebAudioDriver::new();
 
     // If we're in compatibility/color mode, write the compatibility flag as is to KEY0
     // otherwise, write 0x04 to KEY0 and set the OPRI flag on the LCD to 0x01
@@ -129,7 +133,8 @@ impl Emulator {
       renderer,
       obj_renderer,
       tile_renderer,
-      unmapped_memory
+      unmapped_memory,
+      audio_driver
     }
   }
 
@@ -200,6 +205,7 @@ impl Emulator {
       (*self.rom).borrow_mut().tick(double_speed);
       self.speed_controller.tick(&mut self.cpu);
       self.button_controller.tick(&mut self.interrupt_controller);
+      self.audio_controller.tick(&mut self.audio_driver, &mut self.timer, double_speed);
       self.timer.tick(&mut self.interrupt_controller);
       self.lcd.tick(&self.vram, &self.cram, &self.oam, &mut self.renderer, &mut self.obj_renderer, &mut self.tile_renderer, &mut self.interrupt_controller, double_speed);
       let mut dma_memory_bus = DMAMemoryBus {
