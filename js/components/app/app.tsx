@@ -1,4 +1,4 @@
-import {Button, Emulator, OAMObject} from '../../../pkg';
+import {Button, Emulator, OAMObject} from '../../../pkg/rustboy';
 import React, {FormEvent, KeyboardEvent, MouseEvent, useEffect, useRef, useState} from 'react'
 import './app.scss'
 // @ts-ignore
@@ -38,9 +38,9 @@ export const App = () => {
     const node = audioContext.createBufferSource()
     node.buffer = audioBuffer
     node.loop = true
-    const step = 1/128;
+    const step = 1 / 128;
     let currentFrequency = frequency
-    for(let i = 0 ; i < 512; i++) {
+    for (let i = 0; i < 512; i++) {
       currentFrequency += 2
       node.playbackRate.setValueAtTime(currentFrequency, audioContext.currentTime + (i * step))
     }
@@ -93,24 +93,34 @@ export const App = () => {
     }
     animationId = requestAnimationFrame(drawAudio)
 
-    await audioContext.audioWorklet.addModule("white-noise-processor.js");
+    await audioContext.audioWorklet.addModule("waveform-processor.js");
     const pwmNode = new AudioWorkletNode(
       audioContext,
-      "white-noise-processor"
+      "waveform-processor"
     );
     // pwmNode.parameters.get('dutyCycle').value = 0.25
-    pwmNode.parameters.get('frequency').value = 40000
-    pwmNode.parameters.get('width').value = 0.7
+    pwmNode.parameters.get('frequency').value = 50
+    let sourceData = [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10]
+    let data = []
+    for (let i = 0; i < 4; i++) {
+      let offset = 4 * i
+      data[i] = sourceData[offset] +
+        (sourceData[offset + 1] * Math.pow(2, 8)) +
+        (sourceData[offset + 2] * Math.pow(2, 16)) +
+        (sourceData[offset + 3] * Math.pow(2, 24))
+    }
+    console.log(JSON.stringify(data))
+    pwmNode.parameters.get('data0').value = data[0]
+    pwmNode.parameters.get('data1').value = data[1]
+    pwmNode.parameters.get('data2').value = data[2]
+    pwmNode.parameters.get('data3').value = data[3]
     const trigger = pwmNode.parameters.get('trigger');
     trigger.value = 1
-    trigger.setValueAtTime(0, audioContext.currentTime + 1)
-    trigger.setValueAtTime(1, audioContext.currentTime + 2)
-    trigger.setValueAtTime(0, audioContext.currentTime + 3)
-    trigger.setValueAtTime(1, audioContext.currentTime + 4)
-    trigger.setValueAtTime(0, audioContext.currentTime + 5)
+    const gain = pwmNode.parameters.get('gain')
+    gain.value = 1.0
+    gain.setValueAtTime(0.5, audioContext.currentTime + 2)
     pwmNode.connect(analyzer);
     analyzer.connect(audioContext.destination);
-
 
 
     // channel1.connect(channel1Gain)
@@ -230,8 +240,8 @@ export const App = () => {
     const infoElementBoundingRect = infoElement.getBoundingClientRect()
     const x = Math.round(event.clientX - infoElementBoundingRect.left - parseFloat(infoElementStyle.borderLeftWidth ?? '0'))
     const y = Math.round(event.clientY - infoElementBoundingRect.top - parseFloat(infoElementStyle.borderTopWidth ?? '0'))
-    if (x >= 0 && x <= 159 && y >= 0 && y<= 31) {
-      const objectIndex = Math.floor(y / 16) * 16 + Math.floor(x/8)
+    if (x >= 0 && x <= 159 && y >= 0 && y <= 31) {
+      const objectIndex = Math.floor(y / 16) * 16 + Math.floor(x / 8)
       setObjectInfoIndex(objectIndex)
     } else {
       setObjectInfoIndex(undefined)
@@ -252,7 +262,12 @@ export const App = () => {
         if (emulator) {
           emulator.free()
         }
-        setEmulator(Emulator.new(byteArray))
+        const AudioContext = window.AudioContext || window.webkitAudioContext
+        const audioContext: AudioContext = new AudioContext()
+        await audioContext.audioWorklet.addModule("pwm-processor.js")
+        await audioContext.audioWorklet.addModule("waveform-processor.js")
+        await audioContext.audioWorklet.addModule("white-noise-processor.js")
+        setEmulator(Emulator.new(byteArray, audioContext))
       }
     }
   }
@@ -291,11 +306,11 @@ export const App = () => {
           <div>X: { selectedObject.lcd_x }</div>
           <div>Y: { selectedObject.lcd_y }</div>
           <div>Tile Index: { selectedObject.tile_index }</div>
-          <div>Attributes: { `0x${selectedObject.attributes.value().toString(16)}` }</div>
-        </div>  : <React.Fragment/>
+          <div>Attributes: { `0x${ selectedObject.attributes.value().toString(16) }` }</div>
+        </div> : <React.Fragment/>
 
       }
-      <canvas id="oscilloscope-canvas" ref={oscilloscopeRef} width={200} height={100}></canvas>
+      <canvas id="oscilloscope-canvas" ref={ oscilloscopeRef } width={ 200 } height={ 100 }></canvas>
     </div>
     <div className="tile-debugger">
       <h3>Tile data</h3>

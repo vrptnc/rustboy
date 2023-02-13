@@ -2,13 +2,13 @@ const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const CopyWebpackPlugin = require('copy-webpack-plugin')
 const TsconfigPathsPlugin = require('tsconfig-paths-webpack-plugin')
-const WasmPackWebpackPlugin = require('@wasm-tool/wasm-pack-plugin')
 
 const dist = path.resolve(__dirname, 'dist')
 
 module.exports = {
     experiments: {
-      asyncWebAssembly: true
+        asyncWebAssembly: true,
+        topLevelAwait: true
     },
     resolve: {
         plugins: [ new TsconfigPathsPlugin() ],
@@ -26,6 +26,10 @@ module.exports = {
     target: 'web',
     module: {
         rules: [
+            {
+                test: /\.wasm$/,
+                type: 'asset/resource',
+            },
             {
                 test: /\.(js|ts|tsx)$/,
                 exclude: /node_modules/,
@@ -56,9 +60,6 @@ module.exports = {
             patterns: [
                 {from: '*.js', context: path.resolve(__dirname, 'static')}
             ]
-        }),
-        new WasmPackWebpackPlugin({
-            crateDirectory: __dirname
         })
     ]
 }

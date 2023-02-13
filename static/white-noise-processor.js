@@ -1,7 +1,7 @@
 class WhiteNoiseProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
-        this.lfsr = 0
+        this.lfsr = [...Array(15).fill(false)]
         this.currentSample = 0
     }
 
@@ -16,7 +16,7 @@ class WhiteNoiseProcessor extends AudioWorkletProcessor {
             },
             {
                 name: "gain",
-                defaultValue: 1,
+                defaultValue: 0,
                 minValue: 0,
                 maxValue: 1,
                 automationRate: "k-rate",
@@ -30,7 +30,7 @@ class WhiteNoiseProcessor extends AudioWorkletProcessor {
             },
             {
                 name: "width",
-                defaultValue: 1,
+                defaultValue: 0,
                 minValue: 0,
                 maxValue: 1,
                 automationRate: "k-rate",
@@ -39,18 +39,19 @@ class WhiteNoiseProcessor extends AudioWorkletProcessor {
     }
 
     doTick(short) {
-        let bit0 = (this.lfsr & 0x1) === 1
-        let bit1 = ((this.lfsr >> 1) & 0x1) === 1
-        let newBitValue = !(bit0 !== bit1)
-        const mask = (newBitValue << 15) | (short ? (newBitValue << 7) : 0)
-        this.lfsr = this.lfsr >> 1
-        this.lfsr = (this.lfsr & ~mask) | mask
+        const newBitValue = this.lfsr[0] === this.lfsr[1]
+        this.lfsr.shift()
+        this.lfsr.push(newBitValue)
+        if (short) {
+            this.lfsr[6] = newBitValue
+        }
     }
 
     process(inputs, outputs, parameters) {
         const enabled = parameters.trigger[0] > 0.5
         if (enabled) {
-            const short = parameters.width[0] < 0.5
+            const gain = parameters.gain[0]
+            const short = parameters.width[0] > 0.5
             const output = outputs[0];
             const samplesPerTick = Math.floor(sampleRate / parameters.frequency[0])
             output.forEach((channel) => {
@@ -59,11 +60,13 @@ class WhiteNoiseProcessor extends AudioWorkletProcessor {
                         this.currentSample = 0
                         this.doTick(short)
                     }
-                    const value = (this.lfsr % 2) === 1 ? -1 : 1;
-                    channel[i] = value * parameters.gain[0]
+                    const value = this.lfsr[0] ? -1 : 1;
+                    channel[i] = value * gain
                     this.currentSample++
                 }
             });
+        } else {
+            this.lfsr = [...Array(15).fill(false)]
         }
         return true;
     }

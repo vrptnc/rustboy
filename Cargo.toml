@@ -15,6 +15,7 @@ num = "0.4.0"
 closure = "0.3.0"
 mockall = "0.11.3"
 wee_alloc = { version = "0.4.5", optional = true }
+wasm-bindgen-futures = "0.4.34"
 
 [dependencies.itertools]
 version = "0.10.5"
@@ -22,7 +23,7 @@ features = ["use_alloc"]
 
 [dependencies.web-sys]
 version = "0.3.57"
-features = ["console", "Performance", "Document", "Element", "HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "Window", "AudioContext", "AudioParam", "OscillatorNode", "BiquadFilterNode", "BiquadFilterType", "AudioDestinationNode", "AudioBuffer", "AudioBufferSourceNode", "GainNode"]
+features = ["console", "Worklet", "Performance", "Document", "Element", "HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "Window", "AudioContext", "AudioParam", "AudioParamMap", "AudioWorklet", "AudioWorkletNode", "OscillatorNode", "BiquadFilterNode", "BiquadFilterType", "AudioDestinationNode", "AudioBuffer", "AudioBufferSourceNode", "GainNode", "MessagePort"]
 
 [dev-dependencies]
 assert_hex = "0.2.2"

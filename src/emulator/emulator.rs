@@ -5,7 +5,7 @@ use std::panic;
 use std::rc::Rc;
 
 use wasm_bindgen::prelude::wasm_bindgen;
-use web_sys::console;
+use web_sys::{AudioContext, console};
 use crate::audio::audio_driver::{AudioDriver, Channel, DutyCycle};
 use crate::audio::web_audio_driver::WebAudioDriver;
 
@@ -67,7 +67,7 @@ pub struct Emulator {
 
 #[wasm_bindgen]
 impl Emulator {
-  pub fn new(rom_bytes: &[u8]) -> Emulator {
+  pub fn new(rom_bytes: &[u8], audio_context: AudioContext) -> Emulator {
     panic::set_hook(Box::new(console_error_panic_hook::hook));
     let rom_size = ROMSize::from_byte(rom_bytes[0x0148]);
     let ram_size = RAMSize::from_byte(rom_bytes[0x0149]);
@@ -96,7 +96,7 @@ impl Emulator {
     let tile_renderer = CanvasRenderer::new("tile-canvas", Color::transparent(), 256, 192);
     let obj_renderer = CanvasRenderer::new("object-canvas", Color::transparent(), 160, 32);
     let unmapped_memory = UnmappedMemory::new();
-    let mut audio_driver = WebAudioDriver::new();
+    let mut audio_driver = WebAudioDriver::new(audio_context);
 
     // If we're in compatibility/color mode, write the compatibility flag as is to KEY0
     // otherwise, write 0x04 to KEY0 and set the OPRI flag on the LCD to 0x01

@@ -73,8 +73,8 @@ impl OAMImpl {
 impl OAM for OAMImpl {
   fn get_object_reference_if_intersects(&self, object_index: u8, line: u8, use_8_x_16_tiles: bool) -> Option<ObjectReference> {
     let object_lcd_y = self.bytes[4 * object_index as usize];
-    let top_tile_intersects = object_lcd_y - 16 <= line && object_lcd_y - 8 > line;
-    let bottom_tile_intersects = object_lcd_y - 16 <= line && object_lcd_y > line;
+    let top_tile_intersects = object_lcd_y <= line + 16 && object_lcd_y > line + 8;
+    let bottom_tile_intersects = object_lcd_y <= line + 16 && object_lcd_y > line;
     if top_tile_intersects {
       Some(ObjectReference {
         object_index,
