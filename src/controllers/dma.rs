@@ -18,8 +18,8 @@ struct DMATransfer {
   transfer_type: DMATransferType,
   source_address: u16,
   destination_address: u16,
-  bytes_transferred: u8,
-  bytes_to_transfer: u8,
+  bytes_transferred: u16,
+  bytes_to_transfer: u16,
 }
 
 impl DMATransfer {
@@ -33,7 +33,7 @@ impl DMATransfer {
     }
   }
 
-  pub fn new(source_address: u16, destination_address: u16, bytes_to_transfer: u8, transfer_type: DMATransferType) -> DMATransfer {
+  pub fn new(source_address: u16, destination_address: u16, bytes_to_transfer: u16, transfer_type: DMATransferType) -> DMATransfer {
     DMATransfer {
       transfer_type,
       source_address,
@@ -86,11 +86,11 @@ impl DMAControllerImpl {
   }
 
   fn handle_legacy_transfer(&mut self, memory: &mut dyn Memory) {
-    let mut bytes_transferred = self.active_transfer.bytes_transferred as u16;
+    let mut bytes_transferred = self.active_transfer.bytes_transferred;
     let current_byte = memory.read(self.active_transfer.source_address + bytes_transferred);
     memory.write(0xFE00 + bytes_transferred, current_byte);
     bytes_transferred += 1;
-    self.active_transfer.bytes_transferred = bytes_transferred as u8;
+    self.active_transfer.bytes_transferred = bytes_transferred;
     if bytes_transferred == 160 {
       self.active_transfer.transfer_type = DMATransferType::Inactive
     }
@@ -101,16 +101,16 @@ impl DMAControllerImpl {
       return;
     }
     cpu.disable();
-    let mut bytes_transferred = self.active_transfer.bytes_transferred as u16;
+    let mut bytes_transferred = self.active_transfer.bytes_transferred;
     let DMATransfer { source_address, destination_address, bytes_to_transfer, .. } = self.active_transfer;
     let current_byte = memory.read(source_address + bytes_transferred);
     memory.write(destination_address + (bytes_transferred as u16), current_byte);
     bytes_transferred += 1;
-    self.active_transfer.bytes_transferred = bytes_transferred as u8;
+    self.active_transfer.bytes_transferred = bytes_transferred;
     if bytes_transferred == (bytes_to_transfer as u16) {
       self.active_transfer.transfer_type = DMATransferType::Inactive;
       self.hdma5 = 0xFF;
-      cpu.enable()
+      cpu.enable();
     }
   }
 
@@ -149,7 +149,7 @@ impl DMAControllerImpl {
         let lines_to_transfer = bytes_to_transfer / 16;
         let lines_transferred = bytes_transferred / 16;
         let lines_remaining = lines_to_transfer - lines_transferred;
-        self.hdma5 = lines_remaining - 1;
+        self.hdma5 = (lines_remaining - 1) as u8;
       }
     } else {
       cpu.enable();
@@ -196,7 +196,7 @@ impl Memory for DMAControllerImpl {
           DMATransferType::Inactive => {
             let source_address = ((self.high_source_address as u16) << 8) | (self.low_source_address as u16);
             let destination_address = ((self.high_destination_address as u16) << 8) | (self.low_destination_address as u16);
-            let bytes_to_transfer = ((value & 0x7F) + 1) * 16;
+            let bytes_to_transfer = (((value & 0x7F) + 1) as u16) * 16;
             let transfer_type = if value.get_bit(7) { DMATransferType::HBlank } else { DMATransferType::GeneralPurpose };
             if value.get_bit(7) {
               DMATransferType::HBlank

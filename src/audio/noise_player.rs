@@ -22,8 +22,9 @@ impl NoisePlayer {
     }
   }
 
-  pub fn stop(&mut self) {
-    self.playing = false
+  pub fn stop(&mut self, audio_driver: &mut dyn AudioDriver) {
+    self.playing = false;
+    audio_driver.stop(self.channel);
   }
 
   pub fn tick(&mut self, audio_driver: &mut dyn AudioDriver) {

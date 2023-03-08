@@ -1,3 +1,4 @@
+use web_sys::console;
 use crate::audio::audio_driver::{AudioDriver, Channel, CustomWaveOptions};
 use crate::util::request_flag::RequestFlag;
 
@@ -33,8 +34,9 @@ impl CustomWavePlayer {
     self.triggered.set();
   }
 
-  pub fn stop(&mut self) {
+  pub fn stop(&mut self, audio_driver: &mut dyn AudioDriver) {
     self.playing = false;
+    audio_driver.stop(self.channel);
   }
 
   pub fn get_lower_wavelength_bits(&self) -> u8 {

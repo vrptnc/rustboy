@@ -1,4 +1,5 @@
 use std::iter;
+
 use js_sys::Object;
 use wasm_bindgen::{Clamped, JsCast};
 use web_sys::{CanvasRenderingContext2d, console, HtmlCanvasElement, ImageData, Window};
@@ -11,25 +12,28 @@ pub struct CanvasRenderer {
   pixel_data: Vec<u8>,
   priorities: Vec<u8>,
   width: usize,
-  height: usize
+  height: usize,
 }
 
 impl CanvasRenderer {
-  pub fn new(canvas_id: &str, background_color: Color, width: usize, height: usize) -> Self {
+  pub fn get_context(canvas_id: &str) -> CanvasRenderingContext2d {
     let canvas: HtmlCanvasElement = web_sys::window()
       .and_then(|window: Window| window.document())
       .and_then(|document| document.get_element_by_id(canvas_id))
       .map(|canvas_element| canvas_element.dyn_into::<HtmlCanvasElement>())
       .unwrap()
       .unwrap();
-    let context: CanvasRenderingContext2d = canvas.get_context("2d")
+    canvas.get_context("2d")
       .map(|optional_context: Option<Object>| optional_context
         .and_then(|context: Object| context.dyn_into::<CanvasRenderingContext2d>().ok())
         .unwrap()
       )
-      .unwrap();
+      .unwrap()
+  }
+
+  pub fn new(canvas_id: &str, background_color: Color, width: usize, height: usize) -> Self {
     let mut renderer = CanvasRenderer {
-      ctx: context,
+      ctx: CanvasRenderer::get_context(canvas_id),
       background_color,
       width,
       height,
@@ -55,7 +59,6 @@ impl CanvasRenderer {
 }
 
 impl Renderer for CanvasRenderer {
-
   fn draw_pixel(&mut self, x: usize, y: usize, color: Color, drawing_priority: u8) {
     if !color.transparent {
       let color_8_bit = color.to_rgb888();

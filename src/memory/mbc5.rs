@@ -61,7 +61,9 @@ impl Memory for MBC5 {
           self.ram[address_in_ram] = value
         }
       }
-      _ => panic!("Can't write to address {:#06x} on MBC5", address)
+      _ => {
+        // panic!("Can't write to address {:#06x} on MBC5", address)
+      }
     };
   }
 }

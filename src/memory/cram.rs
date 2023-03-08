@@ -148,8 +148,6 @@ mod tests {
 
   use super::*;
 
-//TODO add test cases for grayscale palettes
-
   #[test_case(0xFF68, 0xFF69; "background color")]
   #[test_case(0xFF6A, 0xFF6B; "object color")]
   fn writes_color_to_correct_location(index_address: u16, data_address: u16) {

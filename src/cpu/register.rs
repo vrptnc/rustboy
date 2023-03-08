@@ -119,7 +119,20 @@ pub struct Registers([u8; 12]);
 
 impl Registers {
   pub fn new() -> Registers {
-    Registers([0; 12])
+    Registers([
+      0x11, // A
+      0x80, // F
+      0, // B
+      0, // C
+      0, // D
+      0, // E
+      0, // H
+      0, // L
+      0, // P
+      0, // C
+      0, // S
+      0  // P
+    ])
   }
 
   pub fn read_byte(&self, register: ByteRegister) -> u8 {

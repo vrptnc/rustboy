@@ -59,11 +59,11 @@ impl GainController {
   }
 
   pub fn tick(&mut self, audio_driver: &mut dyn AudioDriver) -> GainControllerTickResult {
-    if !self.active {
-      return GainControllerTickResult::Ok;
-    }
     if self.dac_shut_off() {
       return GainControllerTickResult::DacShutOff;
+    }
+    if !self.active {
+      return GainControllerTickResult::Ok;
     }
     if self.current_settings.pace == 0 {
       return GainControllerTickResult::Ok;

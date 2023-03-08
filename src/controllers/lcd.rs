@@ -176,7 +176,7 @@ impl LCDControllerImpl {
   }
 
   fn draw_background_line(&self, vram: &dyn VRAM, cram: &dyn CRAM, renderer: &mut dyn Renderer) {
-    // Don't draw the background line of we're in monochrome mode and bg_proprity bit is cleared
+    // Don't draw the background line of we're in monochrome mode and bg_priority bit is cleared
     if self.opri == 1 && !self.lcdc.bg_priority() {
       return;
     }
@@ -190,7 +190,7 @@ impl LCDControllerImpl {
       },
     });
     color_references.into_iter()
-      .map(|color_ref| (color_ref, if self.opri == 1 { cram.monochrome_background_color(color_ref) } else { cram.monochrome_background_color(color_ref) }))
+      .map(|color_ref| (color_ref, if self.opri == 1 { cram.monochrome_background_color(color_ref) } else { cram.background_color(color_ref) }))
       .enumerate()
       .for_each(|(x, (color_ref, color))| {
         let bg_drawing_priority = if color_ref.color_index == 0 || !self.lcdc.bg_priority() {

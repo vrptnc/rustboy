@@ -6,9 +6,9 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_sys::{AudioContext, console};
+
 use crate::audio::audio_driver::{AudioDriver, Channel, DutyCycle};
 use crate::audio::web_audio_driver::WebAudioDriver;
-
 use crate::controllers::audio::AudioControllerImpl;
 use crate::controllers::buttons::{Button, ButtonController, ButtonControllerImpl};
 use crate::controllers::dma::{DMAController, DMAControllerImpl};
@@ -38,6 +38,7 @@ use crate::memory::wram::WRAMImpl;
 use crate::renderer::canvas_renderer::CanvasRenderer;
 use crate::renderer::renderer::Color;
 use crate::util::bit_util::BitUtil;
+use crate::util::instruction_label_provider::InstructionLabelProvider;
 
 #[wasm_bindgen]
 pub struct Emulator {
@@ -62,7 +63,7 @@ pub struct Emulator {
   reserved_area_1: LinearMemory::<0x1E00, 0xE000>,
   reserved_area_2: LinearMemory::<0x0060, 0xFEA0>,
   unmapped_memory: UnmappedMemory,
-  audio_driver: WebAudioDriver
+  audio_driver: WebAudioDriver,
 }
 
 #[wasm_bindgen]
@@ -134,8 +135,13 @@ impl Emulator {
       obj_renderer,
       tile_renderer,
       unmapped_memory,
-      audio_driver
+      audio_driver,
     }
+  }
+
+  pub fn get_state(&self) -> Vec<u8> {
+    let mut bytes: Vec<u8> = Vec::new();
+    bytes
   }
 
   fn create_rom(rom_bytes: &[u8], rom_size: ROMSize, ram_size: RAMSize) -> Rc<RefCell<dyn MBC>> {
@@ -170,51 +176,91 @@ impl Emulator {
     self.cpu.cpu_info()
   }
 
+  pub fn get_instruction_label(&mut self, address: u16) -> String {
+    let mut memory_bus = MemoryBus {
+      rom: Rc::clone(&self.rom),
+      vram: &mut self.vram,
+      wram: &mut self.wram,
+      reserved_area_1: &mut self.reserved_area_1,
+      oam: &mut self.oam,
+      reserved_area_2: &mut self.reserved_area_2,
+      button_controller: &mut self.button_controller,
+      timer: &mut self.timer,
+      interrupt_controller: &mut self.interrupt_controller,
+      speed_controller: &mut self.speed_controller,
+      audio_controller: &mut self.audio_controller,
+      lcd: &mut self.lcd,
+      dma: &mut self.dma,
+      cram: &mut self.cram,
+      control_registers: &mut self.control_registers,
+      stack: &mut self.stack,
+      unmapped_memory: &mut self.unmapped_memory,
+    };
+    InstructionLabelProvider::get_label(&memory_bus, address)
+  }
+
   pub fn get_object(&self, object_index: u8) -> OAMObject {
     self.oam.get_object(ObjectReference {
       object_index,
-      use_bottom_tile: false
+      use_bottom_tile: false,
     }, self.lcd.use_8_x_16_tiles())
   }
 
-  pub fn tick(&mut self, delta_nanos: u64) {
-    let mut remaining_nanos = delta_nanos;
+  pub fn draw(&mut self) {
+    self.audio_driver.draw();
+  }
+
+  pub fn tick(&mut self) {
+    let double_speed = self.speed_controller.double_speed();
+    let mut memory_bus = MemoryBus {
+      rom: Rc::clone(&self.rom),
+      vram: &mut self.vram,
+      wram: &mut self.wram,
+      reserved_area_1: &mut self.reserved_area_1,
+      oam: &mut self.oam,
+      reserved_area_2: &mut self.reserved_area_2,
+      button_controller: &mut self.button_controller,
+      timer: &mut self.timer,
+      interrupt_controller: &mut self.interrupt_controller,
+      speed_controller: &mut self.speed_controller,
+      audio_controller: &mut self.audio_controller,
+      lcd: &mut self.lcd,
+      dma: &mut self.dma,
+      cram: &mut self.cram,
+      control_registers: &mut self.control_registers,
+      stack: &mut self.stack,
+      unmapped_memory: &mut self.unmapped_memory,
+    };
+    self.cpu.tick(&mut memory_bus);
+    (*self.rom).borrow_mut().tick(double_speed);
+    self.speed_controller.tick(&mut self.cpu);
+    self.button_controller.tick(&mut self.interrupt_controller);
+    self.audio_controller.tick(&mut self.audio_driver, &mut self.timer, double_speed);
+    self.timer.tick(&mut self.interrupt_controller);
+    self.lcd.tick(&self.vram, &self.cram, &self.oam, &mut self.renderer, &mut self.obj_renderer, &mut self.tile_renderer, &mut self.interrupt_controller, double_speed);
+    let mut dma_memory_bus = DMAMemoryBus {
+      rom: Rc::clone(&self.rom),
+      vram: &mut self.vram,
+      wram: &mut self.wram,
+      oam: &mut self.oam,
+    };
+    self.dma.tick(&mut dma_memory_bus, &mut self.cpu, &self.lcd, double_speed);
+  }
+
+  pub fn execute_machine_cycle(&mut self) {
+    console::log_1(&"Executing machine cycle".into());
+    console::log_1(&format!("{:?}", self.cpu.cpu_info()).into());
+    self.tick();
+    console::log_1(&format!("{:?}", self.cpu.cpu_info()).into());
+    self.cpu.print_instructions();
+  }
+
+  pub fn run_for_nanos(&mut self, nanos: u64) {
+    let mut remaining_nanos = nanos;
     while remaining_nanos > 0 {
       let double_speed = self.speed_controller.double_speed();
       remaining_nanos = remaining_nanos.saturating_sub(if double_speed { 500 } else { 1000 });
-      let mut memory_bus = MemoryBus {
-        rom: Rc::clone(&self.rom),
-        vram: &mut self.vram,
-        wram: &mut self.wram,
-        reserved_area_1: &mut self.reserved_area_1,
-        oam: &mut self.oam,
-        reserved_area_2: &mut self.reserved_area_2,
-        button_controller: &mut self.button_controller,
-        timer: &mut self.timer,
-        interrupt_controller: &mut self.interrupt_controller,
-        speed_controller: &mut self.speed_controller,
-        audio_controller: &mut self.audio_controller,
-        lcd: &mut self.lcd,
-        dma: &mut self.dma,
-        cram: &mut self.cram,
-        control_registers: &mut self.control_registers,
-        stack: &mut self.stack,
-        unmapped_memory: &mut self.unmapped_memory,
-      };
-      self.cpu.tick(&mut memory_bus);
-      (*self.rom).borrow_mut().tick(double_speed);
-      self.speed_controller.tick(&mut self.cpu);
-      self.button_controller.tick(&mut self.interrupt_controller);
-      self.audio_controller.tick(&mut self.audio_driver, &mut self.timer, double_speed);
-      self.timer.tick(&mut self.interrupt_controller);
-      self.lcd.tick(&self.vram, &self.cram, &self.oam, &mut self.renderer, &mut self.obj_renderer, &mut self.tile_renderer, &mut self.interrupt_controller, double_speed);
-      let mut dma_memory_bus = DMAMemoryBus {
-        rom: Rc::clone(&self.rom),
-        vram: &mut self.vram,
-        wram: &mut self.wram,
-        oam: &mut self.oam,
-      };
-      self.dma.tick(&mut dma_memory_bus, &mut self.cpu, &self.lcd, double_speed);
+      self.tick();
     }
   }
 }

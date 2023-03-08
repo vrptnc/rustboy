@@ -27,7 +27,7 @@ impl Memory for WRAMImpl {
         self.bytes[(address - WRAMImpl::START_ADDRESS) as usize]
       }
       WRAMImpl::DYNAMIC_BANK_START_ADDRESS..=WRAMImpl::END_ADDRESS => {
-        self.bytes[(self.bank_index as u16 * WRAMImpl::BANK_SIZE + address - WRAMImpl::BANK_0_END_ADDRESS) as usize]
+        self.bytes[(self.bank_index as u16 * WRAMImpl::BANK_SIZE + address - WRAMImpl::DYNAMIC_BANK_START_ADDRESS) as usize]
       },
       MemoryAddress::SVBK => self.bank_index,
       _ => panic!("Can't read address {} from WRAM", address)
@@ -40,7 +40,7 @@ impl Memory for WRAMImpl {
         self.bytes[(address - WRAMImpl::START_ADDRESS) as usize] = value;
       }
       WRAMImpl::DYNAMIC_BANK_START_ADDRESS..=WRAMImpl::END_ADDRESS => {
-        self.bytes[(self.bank_index as u16 * WRAMImpl::BANK_SIZE + address - WRAMImpl::BANK_0_END_ADDRESS) as usize] = value;
+        self.bytes[(self.bank_index as u16 * WRAMImpl::BANK_SIZE + address - WRAMImpl::DYNAMIC_BANK_START_ADDRESS) as usize] = value;
       },
       MemoryAddress::SVBK => {
         self.bank_index = value & 0x07;

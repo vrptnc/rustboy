@@ -4,9 +4,10 @@
   display: grid;
   box-sizing: border-box;
   grid-template-areas:
-        "title title title"
-        "menu menu menu"
-        "gameboy object-debugger tile-debugger";
+        "title title title title"
+        "menu menu menu menu"
+        "gameboy cpu-info . ."
+        "gameboy object-debugger tile-debugger audio-debugger";
   grid-template-rows: 1fr 1fr 1fr;
   height: 100%;
   width: 100%;
@@ -28,6 +29,10 @@
   position: relative;
 }
 
+.cpu-info {
+  grid-area: cpu-info;
+}
+
 .object-debugger {
   grid-area: object-debugger;
   display: flex;
@@ -39,13 +44,24 @@
   grid-area: tile-debugger;
 }
 
+.audio-debugger {
+  grid-area: audio-debugger;
+  display: grid;
+  grid-auto-rows: auto;
+  grid-auto-columns: auto;
+  & > h3 {
+    grid-column: span 2;
+  }
+  width: fit-content;
+  height: fit-content;
+}
+
 .menu {
   grid-area: menu;
   display: flex;
   flex-direction: row;
   gap: 15px;
 }
-
 
 #main-canvas {
   position: absolute;
@@ -62,6 +78,12 @@
 }
 
 #oscilloscope-canvas {
+  background-color: white;
+  width: 200px;
+  border: 1px solid black;
+}
+
+#ch1-canvas, #ch2-canvas, #ch3-canvas, #ch4-canvas {
   background-color: white;
   width: 200px;
   border: 1px solid black;

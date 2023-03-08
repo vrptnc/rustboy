@@ -167,12 +167,12 @@ impl AudioControllerImpl {
       }
       Channel::CH3 => {
         self.ch3_length_timer.stop();
-        self.ch3_custom_wave_player.stop();
+        self.ch3_custom_wave_player.stop(audio_driver);
       }
       Channel::CH4 => {
         self.ch4_length_timer.stop();
         self.ch4_gain_controller.stop();
-        self.ch4_noise_player.stop();
+        self.ch4_noise_player.stop(audio_driver);
       }
     }
     audio_driver.stop(channel)
@@ -333,7 +333,8 @@ impl Memory for AudioControllerImpl {
         self.ch3_length_timer.new_settings.initial_value = value as u16;
       }
       MemoryAddress::NR32 => {
-        self.ch3_custom_wave_player.gain = (value >> 5) & 0x3;
+        let gain = (value >> 5) & 0x3;
+        self.ch3_custom_wave_player.gain = gain;
       }
       MemoryAddress::NR33 => {
         self.ch3_custom_wave_player.set_lower_wavelength_bits(value);

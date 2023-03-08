@@ -94,7 +94,7 @@ impl CPU for CPUImpl {
         InstructionDecoder::schedule_call_interrupt_routine(self, Interrupt::ButtonPressed);
       }
     } else if !self.instructions.is_empty() {
-      self.execute_machine_cyle(memory);
+      self.execute_machine_cycle(memory);
     } else if self.enabled {
       let optional_interrupt = Interrupt::from_bit(memory.read(MemoryAddress::RI));
       if let Some(interrupt) = optional_interrupt {
@@ -105,7 +105,7 @@ impl CPU for CPUImpl {
       } else {
         self.decode_instruction(memory);
       }
-      self.execute_machine_cyle(memory);
+      self.execute_machine_cycle(memory);
     }
   }
 }
@@ -129,6 +129,10 @@ impl CPUImpl {
       instructions: VecDeque::with_capacity(20),
       registers: Registers::new(),
     }
+  }
+
+  pub fn print_instructions(&self) {
+    console::log_1(&format!("{:?}", self.instructions).into());
   }
 
   pub fn init(&mut self) {
@@ -208,7 +212,7 @@ impl CPUImpl {
     }
   }
 
-  fn execute_machine_cyle(&mut self, memory: &mut dyn Memory) {
+  fn execute_machine_cycle(&mut self, memory: &mut dyn Memory) {
     while let Some(instruction) = self.instructions.pop_front() {
 
       if let Instruction::Defer = instruction {

@@ -1,5 +1,6 @@
-import {Button, Emulator, OAMObject} from '../../../pkg/rustboy';
+import {Button, CPUInfo, Emulator, OAMObject} from '../../../pkg/rustboy';
 import React, {FormEvent, KeyboardEvent, MouseEvent, useEffect, useRef, useState} from 'react'
+import {saveAs} from 'file-saver'
 import './app.scss'
 // @ts-ignore
 import gbImage from '../../images/gb.png'
@@ -10,136 +11,73 @@ export const App = () => {
   const [paused, setPaused] = useState<boolean>(false)
   const [objectInfoIndex, setObjectInfoIndex] = useState<number>()
   const [selectedObject, setSelectedObject] = useState<OAMObject>()
-  const pausedRef = useRef<boolean>(false)
+  const [cpuInfo, setCPUInfo] = useState<CPUInfo>()
+  const [instruction, setInstruction] = useState<string>()
   const previousTimeRef = useRef<number>()
   const animationFrameId = useRef<number>()
-  const oscilloscopeRef = useRef<HTMLCanvasElement>(null)
+  const buttonMapping: Record<string, Button> = {
+    KeyW: Button.UP,
+    KeyA: Button.LEFT,
+    KeyS: Button.DOWN,
+    KeyD: Button.RIGHT,
+    KeyB: Button.A,
+    KeyN: Button.B,
+    KeyT: Button.START,
+    KeyY: Button.SELECT
+  }
 
-  const execute = () => {
-    let currentTime = performance.now();
-    let delta_ms = previousTimeRef.current ? (currentTime - previousTimeRef.current) : 1
-    if (!pausedRef.current) {
-      emulator?.tick(BigInt(Math.floor(delta_ms * 1_000_000)))
-    }
-    previousTimeRef.current = currentTime
+  const scheduleRun = () => {
     animationFrameId.current = requestAnimationFrame(execute)
   }
 
+  const execute = () => {
+    const currentTime = performance.now()
+    const previousTime = previousTimeRef.current ?? (currentTime - 1)
+    const deltaMilliseconds = currentTime - previousTime
+    const deltaNanoseconds = BigInt(Math.floor(deltaMilliseconds * 1_000_000))
+    emulator?.run_for_nanos(deltaNanoseconds)
+    previousTimeRef.current = currentTime
+    scheduleRun()
+  }
+
   const togglePaused = () => {
+    if (paused) {
+      scheduleRun()
+    } else if (animationFrameId.current != null) {
+      cancelAnimationFrame(animationFrameId.current)
+      previousTimeRef.current = undefined
+      const info = emulator?.cpu_info();
+      setCPUInfo(info)
+      setInstruction(emulator?.get_instruction_label(info?.PC ?? 0))
+    }
     setPaused(!paused)
-    pausedRef.current = !pausedRef.current
   }
 
-  const getPWMNode = (audioContext: AudioContext, frequency: number, dutyCycle: number) => {
-    const sampleRate = 8
-    const audioBuffer = audioContext.createBuffer(1, 3000, 3000)
-    const channel1 = audioBuffer.getChannelData(0)
-    channel1.fill(-1, 0, Math.floor(3000 * dutyCycle))
-    const node = audioContext.createBufferSource()
-    node.buffer = audioBuffer
-    node.loop = true
-    const step = 1 / 128;
-    let currentFrequency = frequency
-    for (let i = 0; i < 512; i++) {
-      currentFrequency += 2
-      node.playbackRate.setValueAtTime(currentFrequency, audioContext.currentTime + (i * step))
+  const doTick = () => {
+    if (paused) {
+      emulator?.execute_machine_cycle()
+      const info = emulator?.cpu_info();
+      setCPUInfo(info)
+      setInstruction(emulator?.get_instruction_label(info?.PC ?? 0))
     }
-    return node
   }
 
-  const playSound = async () => {
-    const oscilloscopeCanvas = oscilloscopeRef.current
-    const context2D = oscilloscopeCanvas?.getContext('2d');
-    if (context2D == null) {
-      return
+  const saveState = () => {
+    if (emulator) {
+      setPaused(true)
+      const state = emulator.get_state()
+      const blob = new Blob([state.buffer], {
+        type: 'application/octet-stream'
+      })
+      saveAs(blob, 'state.bin')
     }
-    const AudioContext = window.AudioContext || window.webkitAudioContext
-    const audioContext: AudioContext = new AudioContext()
-
-    // const channel1 = getPWMNode(audioContext, 200, 0.5)
-    // // channel1.frequency.setValueAtTime(200, audioContext.currentTime)
-    //
-    //
-    // const channel1Gain = audioContext.createGain();
-    // channel1Gain.gain.setValueAtTime(0.7, audioContext.currentTime)
-    // channel1Gain.gain.setValueAtTime(0.3, audioContext.currentTime + 1)
-
-    const analyzer = audioContext.createAnalyser()
-    const bufferLength = analyzer.fftSize
-    const sliceWidth = 200 / bufferLength;
-    const audioDataArray = new Uint8Array(bufferLength)
-    let animationId: number
-    const drawAudio = () => {
-      context2D.clearRect(0, 0, 200, 100)
-      analyzer.getByteTimeDomainData(audioDataArray)
-      context2D.lineWidth = 2
-      context2D.strokeStyle = "rgb(0, 0, 0)"
-      context2D.beginPath()
-      let x = 0
-      for (let i = 0; i < bufferLength; i++) {
-        const v = audioDataArray[i] / 128.0;
-        const y = v * 50;
-
-        if (i === 0) {
-          context2D.moveTo(x, y);
-        } else {
-          context2D.lineTo(x, y);
-        }
-        x += sliceWidth;
-      }
-      context2D.lineTo(200, 50);
-      context2D.stroke();
-      animationId = requestAnimationFrame(drawAudio)
-    }
-    animationId = requestAnimationFrame(drawAudio)
-
-    await audioContext.audioWorklet.addModule("waveform-processor.js");
-    const pwmNode = new AudioWorkletNode(
-      audioContext,
-      "waveform-processor"
-    );
-    // pwmNode.parameters.get('dutyCycle').value = 0.25
-    pwmNode.parameters.get('frequency').value = 50
-    let sourceData = [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10]
-    let data = []
-    for (let i = 0; i < 4; i++) {
-      let offset = 4 * i
-      data[i] = sourceData[offset] +
-        (sourceData[offset + 1] * Math.pow(2, 8)) +
-        (sourceData[offset + 2] * Math.pow(2, 16)) +
-        (sourceData[offset + 3] * Math.pow(2, 24))
-    }
-    console.log(JSON.stringify(data))
-    pwmNode.parameters.get('data0').value = data[0]
-    pwmNode.parameters.get('data1').value = data[1]
-    pwmNode.parameters.get('data2').value = data[2]
-    pwmNode.parameters.get('data3').value = data[3]
-    const trigger = pwmNode.parameters.get('trigger');
-    trigger.value = 1
-    const gain = pwmNode.parameters.get('gain')
-    gain.value = 1.0
-    gain.setValueAtTime(0.5, audioContext.currentTime + 2)
-    pwmNode.connect(analyzer);
-    analyzer.connect(audioContext.destination);
-
-
-    // channel1.connect(channel1Gain)
-    // channel1Gain.connect(analyzer)
-    // analyzer.connect(audioContext.destination)
-    //
-    // channel1.start()
-    // channel1.stop(audioContext.currentTime + 5)
-    setTimeout(() => {
-      cancelAnimationFrame(animationId)
-      // context2D.clearRect(0, 0, 200, 100)
-    }, 5000)
   }
 
   useEffect(() => {
     if (animationFrameId.current != null) {
       cancelAnimationFrame(animationFrameId.current)
     }
-    if (emulator != null) {
+    if (emulator != null && !paused) {
       requestAnimationFrame(execute)
     }
   }, [emulator])
@@ -158,39 +96,9 @@ export const App = () => {
     if (emulator == null) {
       return
     }
-    switch (event.code) {
-      case 'KeyW': {
-        emulator.press_button(Button.UP)
-        break
-      }
-      case 'KeyA': {
-        emulator.press_button(Button.LEFT)
-        break
-      }
-      case 'KeyS': {
-        emulator.press_button(Button.DOWN)
-        break
-      }
-      case 'KeyD': {
-        emulator.press_button(Button.RIGHT)
-        break
-      }
-      case 'KeyB': {
-        emulator.press_button(Button.A)
-        break
-      }
-      case 'KeyN': {
-        emulator.press_button(Button.B)
-        break
-      }
-      case 'KeyT': {
-        emulator.press_button(Button.START)
-        break
-      }
-      case 'KeyY': {
-        emulator.press_button(Button.SELECT)
-        break
-      }
+    const button = buttonMapping[event.code]
+    if (button != null) {
+      emulator.press_button(button)
     }
   }
 
@@ -198,39 +106,9 @@ export const App = () => {
     if (emulator == null) {
       return
     }
-    switch (event.code) {
-      case 'KeyW': {
-        emulator.release_button(Button.UP)
-        break
-      }
-      case 'KeyA': {
-        emulator.release_button(Button.LEFT)
-        break
-      }
-      case 'KeyS': {
-        emulator.release_button(Button.DOWN)
-        break
-      }
-      case 'KeyD': {
-        emulator.release_button(Button.RIGHT)
-        break
-      }
-      case 'KeyB': {
-        emulator.release_button(Button.A)
-        break
-      }
-      case 'KeyN': {
-        emulator.release_button(Button.B)
-        break
-      }
-      case 'KeyT': {
-        emulator.release_button(Button.START)
-        break
-      }
-      case 'KeyY': {
-        emulator.release_button(Button.SELECT)
-        break
-      }
+    const button = buttonMapping[event.code]
+    if (button != null) {
+      emulator.release_button(button)
     }
   }
 
@@ -252,6 +130,11 @@ export const App = () => {
     setObjectInfoIndex(undefined)
   }
 
+  const drawChannels = (newEmulator: Emulator) => () => {
+    newEmulator.draw()
+    requestAnimationFrame(drawChannels(newEmulator))
+  }
+
   const handleRomChange = async (event: FormEvent<HTMLInputElement>) => {
     const files = event.currentTarget.files;
     if (files != null && files.length > 0) {
@@ -267,7 +150,9 @@ export const App = () => {
         await audioContext.audioWorklet.addModule("pwm-processor.js")
         await audioContext.audioWorklet.addModule("waveform-processor.js")
         await audioContext.audioWorklet.addModule("white-noise-processor.js")
-        setEmulator(Emulator.new(byteArray, audioContext))
+        const newEmulator = Emulator.new(byteArray, audioContext);
+        setEmulator(newEmulator)
+        requestAnimationFrame(drawChannels(newEmulator))
       }
     }
   }
@@ -275,7 +160,7 @@ export const App = () => {
   return <div className="app" onKeyDown={ onKeyDown } onKeyUp={ onKeyUp } tabIndex={ 0 }>
     <h1 className="title">RustBoy</h1>
     <div className="menu">
-      <div className="rom-selection">
+      <div>
         <label className="button" htmlFor="rom_selector">Choose ROM</label>
         <input
           className="hidden"
@@ -285,13 +170,18 @@ export const App = () => {
           accept=".gb, .gbc"
           onChange={ handleRomChange }/>
       </div>
-      <div className="playback-control">
+      <div>
         <div className="button" onClick={ togglePaused }>
           { paused ? 'Resume' : 'Pause' }
         </div>
       </div>
-      <div className="sound-test">
-        <div className="button" onClick={ playSound }>Play Sound</div>
+      <div>
+        <div className="button" onClick={ doTick }>Tick</div>
+      </div>
+      <div>
+        <div className="button" onClick={ saveState }>
+          Save State
+        </div>
       </div>
     </div>
     <div className="gameboy">
@@ -300,7 +190,8 @@ export const App = () => {
     </div>
     <div className="object-debugger">
       <h3>OAM Content</h3>
-      <canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } width={ 160 } height={ 32 }></canvas>
+      <canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }
+              width={ 160 } height={ 32 }></canvas>
       {
         selectedObject ? <div id="object-info-container">
           <div>X: { selectedObject.lcd_x }</div>
@@ -310,11 +201,33 @@ export const App = () => {
         </div> : <React.Fragment/>
 
       }
-      <canvas id="oscilloscope-canvas" ref={ oscilloscopeRef } width={ 200 } height={ 100 }></canvas>
     </div>
     <div className="tile-debugger">
       <h3>Tile data</h3>
       <canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>
+    </div>
+    <div className="audio-debugger">
+      <h3>Audio</h3>
+      <canvas id="ch1-canvas" width={ 200 } height={ 100 }></canvas>
+      <canvas id="ch2-canvas" width={ 200 } height={ 100 }></canvas>
+      <canvas id="ch3-canvas" width={ 200 } height={ 100 }></canvas>
+      <canvas id="ch4-canvas" width={ 200 } height={ 100 }></canvas>
+    </div>
+    <div className="cpu-info">
+      <h3>CPU Info</h3>
+      {
+        paused && cpuInfo != null ? <div>
+          <div>AF: 0x{ cpuInfo.AF?.toString(16) }</div>
+          <div>BC: 0x{ cpuInfo.BC?.toString(16) }</div>
+          <div>DE: 0x{ cpuInfo.DE?.toString(16) }</div>
+          <div>HL: 0x{ cpuInfo.HL?.toString(16) }</div>
+          <div>SP: 0x{ cpuInfo.SP?.toString(16) }</div>
+          <div>PC: 0x{ cpuInfo.PC?.toString(16) }</div>
+          <div>Stopped: { cpuInfo.stopped ? 'true' : 'false' }</div>
+          <div>Enabled: { cpuInfo.enabled ? 'true' : 'false' }</div>
+          <div>Instruction: { instruction }</div>
+        </div> : <React.Fragment/>
+      }
     </div>
   </div>
 }

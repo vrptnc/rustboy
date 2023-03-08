@@ -1,12 +1,8 @@
 class WaveformProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
-        this.data = [...Array(16).fill(-1), ...Array(16).fill(1)]
         this.currentSample = 0
         this.currentWaveformSample = 0
-        this.port.onmessage = (event) => {
-            this.data = event.data
-        }
     }
 
     static get parameterDescriptors() {
