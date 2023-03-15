@@ -1,3 +1,4 @@
+use web_sys::console;
 use crate::audio::audio_driver::Channel;
 
 pub enum LengthTimerTickResult {

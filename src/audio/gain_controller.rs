@@ -1,3 +1,4 @@
+use web_sys::console;
 use crate::audio::audio_driver::{AudioDriver, Channel};
 
 pub enum GainControllerTickResult {
@@ -62,18 +63,14 @@ impl GainController {
     if self.dac_shut_off() {
       return GainControllerTickResult::DacShutOff;
     }
-    if !self.active {
-      return GainControllerTickResult::Ok;
-    }
-    if self.current_settings.pace == 0 {
-      return GainControllerTickResult::Ok;
-    }
-    self.current_tick = (self.current_tick + 1) % self.current_settings.pace;
-    if self.current_tick == 0 {
-      if self.current_settings.ascending && self.current_value < 0xF {
-        self.current_value += 1;
-      } else if !self.current_settings.ascending && self.current_value > 0 {
-        self.current_value -= 1;
+    if self.active && self.current_settings.pace != 0 {
+      self.current_tick = (self.current_tick + 1) % self.current_settings.pace;
+      if self.current_tick == 0 {
+        if self.current_settings.ascending && self.current_value < 0xF {
+          self.current_value = self.current_value.saturating_add(1);
+        } else if !self.current_settings.ascending && self.current_value > 0 {
+          self.current_value = self.current_value.saturating_sub(1);
+        }
       }
     }
     audio_driver.set_gain(self.channel, (self.current_value as f32) / 15.0);

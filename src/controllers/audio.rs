@@ -2,7 +2,7 @@ use mockall::automock;
 use wasm_bindgen::convert::IntoWasmAbi;
 use web_sys::console;
 
-use crate::audio::audio_driver::{AudioDriver, Channel, CustomWaveOptions, DutyCycle, NoiseOptions, PulseOptions};
+use crate::audio::audio_driver::{AudioDriver, Channel, CustomWaveOptions, DutyCycle, NoiseOptions, PulseOptions, StereoChannel};
 use crate::audio::custom_wave_player::{CustomWavePlayer, CustomWavePlayerTickResult};
 use crate::audio::gain_controller::{GainController, GainControllerTickResult};
 use crate::audio::length_timer::{LengthTimer, LengthTimerTickResult};
@@ -37,6 +37,7 @@ pub struct AudioControllerImpl {
   ch4_noise_player: NoisePlayer,
   master_volume: u8,
   mixing_control: u8,
+  mixing_control_changed: RequestFlag,
   waveform_ram: [u8; 16],
 }
 
@@ -60,6 +61,7 @@ impl AudioControllerImpl {
       ch4_noise_player: NoisePlayer::new(Channel::CH4),
       master_volume: 0,
       mixing_control: 0,
+      mixing_control_changed: RequestFlag(true),
       waveform_ram: [0; 16],
     };
     controller_impl
@@ -96,18 +98,24 @@ impl AudioControllerImpl {
     if let PulsePlayerTickResult::WavelengthOverflowed = self.ch1_pulse_player.tick(audio_driver) {
       self.stop(Channel::CH1, audio_driver);
     }
-    if let PulsePlayerTickResult::WavelengthOverflowed = self.ch2_pulse_player.tick(audio_driver) {
-      self.stop(Channel::CH2, audio_driver);
-    }
-    if let CustomWavePlayerTickResult::DacShutOff = self.ch3_custom_wave_player.tick(audio_driver) {
-      self.stop(Channel::CH3, audio_driver);
-    }
-    self.ch4_noise_player.tick(audio_driver);
   }
 
-  pub fn tick(&mut self, audio_driver: &mut dyn AudioDriver, timer: &dyn TimerController, double_speed: bool) {
+  fn set_stereo_gains(&mut self, audio_driver: &mut dyn AudioDriver) {
+    console::log_1(&format!("Stereo gain: {:#x}", self.mixing_control).into());
+    [Channel::CH1, Channel::CH2, Channel::CH3, Channel::CH4].into_iter()
+      .enumerate()
+      .for_each(|(channel_index, channel)| {
+        audio_driver.set_stereo_gain(channel, StereoChannel::Right, if self.mixing_control.get_bit(channel_index as u8) { 1.0 } else { 0.0 });
+        audio_driver.set_stereo_gain(channel, StereoChannel::Left, if self.mixing_control.get_bit((channel_index + 4) as u8) { 1.0 } else { 0.0 });
+      });
+  }
+
+   pub fn tick(&mut self, audio_driver: &mut dyn AudioDriver, timer: &dyn TimerController, double_speed: bool) {
     if self.disabled_request.get_and_clear() {
       self.disable(audio_driver);
+    }
+    if self.mixing_control_changed.get_and_clear() {
+      self.set_stereo_gains(audio_driver);
     }
     if !self.enabled {
       return;
@@ -126,6 +134,13 @@ impl AudioControllerImpl {
         self.gain_controller_tick(audio_driver);
       }
     }
+    if let PulsePlayerTickResult::WavelengthOverflowed = self.ch2_pulse_player.tick(audio_driver) {
+      self.stop(Channel::CH2, audio_driver);
+    }
+    if let CustomWavePlayerTickResult::DacShutOff = self.ch3_custom_wave_player.tick(audio_driver) {
+      self.stop(Channel::CH3, audio_driver);
+    }
+    self.ch4_noise_player.tick(audio_driver);
     self.previous_timer_div = new_timer_div;
   }
 
@@ -175,7 +190,6 @@ impl AudioControllerImpl {
         self.ch4_noise_player.stop(audio_driver);
       }
     }
-    audio_driver.stop(channel)
   }
 
   fn disable(&mut self, audio_driver: &mut dyn AudioDriver) {
@@ -327,14 +341,14 @@ impl Memory for AudioControllerImpl {
         }
       }
       MemoryAddress::NR30 => {
-        self.ch3_custom_wave_player.dac_enabled = value.get_bit(7);
+        self.ch3_custom_wave_player.set_dac_enabled(value.get_bit(7));
       }
       MemoryAddress::NR31 => {
         self.ch3_length_timer.new_settings.initial_value = value as u16;
       }
       MemoryAddress::NR32 => {
         let gain = (value >> 5) & 0x3;
-        self.ch3_custom_wave_player.gain = gain;
+        self.ch3_custom_wave_player.set_gain(gain);
       }
       MemoryAddress::NR33 => {
         self.ch3_custom_wave_player.set_lower_wavelength_bits(value);
@@ -367,7 +381,10 @@ impl Memory for AudioControllerImpl {
         }
       }
       MemoryAddress::NR50 => self.master_volume = value,
-      MemoryAddress::NR51 => self.mixing_control = value,
+      MemoryAddress::NR51 => {
+        self.mixing_control = value;
+        self.mixing_control_changed.set();
+      },
       MemoryAddress::NR52 => {
         if !value.get_bit(7) {
           self.disabled_request.set();

@@ -35,6 +35,20 @@ class WhiteNoiseProcessor extends AudioWorkletProcessor {
                 maxValue: 1,
                 automationRate: "k-rate",
             },
+            {
+                name: "leftChannelGain",
+                defaultValue: 1.0,
+                minValue: 0,
+                maxValue: 1,
+                automationRate: "k-rate",
+            },
+            {
+                name: "rightChannelGain",
+                defaultValue: 1.0,
+                minValue: 0,
+                maxValue: 1,
+                automationRate: "k-rate",
+            },
         ];
     }
 
@@ -54,15 +68,20 @@ class WhiteNoiseProcessor extends AudioWorkletProcessor {
             const short = parameters.width[0] > 0.5
             const output = outputs[0];
             const samplesPerTick = Math.floor(sampleRate / parameters.frequency[0])
-            output.forEach((channel) => {
-                for (let i = 0; i < channel.length; i++) {
-                    if (this.currentSample > samplesPerTick) {
-                        this.currentSample = 0
-                        this.doTick(short)
-                    }
-                    const value = this.lfsr[0] ? -1 : 1;
-                    channel[i] = value * gain
-                    this.currentSample++
+            const samples = []
+            for (let i = 0; i < 128; i++) {
+                if (this.currentSample > samplesPerTick) {
+                    this.currentSample = 0
+                    this.doTick(short)
+                }
+                const value = this.lfsr[0] ? -1 : 1;
+                samples.push(value * gain)
+                this.currentSample++
+            }
+            output.forEach((channel, channelIndex) => {
+                const channelGain = channelIndex === 0 ? parameters.leftChannelGain[0] : parameters.rightChannelGain[0]
+                for(let i = 0; i < 128; ++i) {
+                    channel[i] = samples[i] * channelGain
                 }
             });
         } else {

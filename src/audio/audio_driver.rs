@@ -15,12 +15,18 @@ pub struct NoiseOptions {
   pub short: bool
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Channel {
   CH1,
   CH2,
   CH3,
   CH4,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum StereoChannel {
+  Left,
+  Right,
 }
 
 #[derive(Copy, Clone)]
@@ -48,6 +54,7 @@ pub trait AudioDriver {
   fn play_noise(&mut self, channel: Channel, noise_options: NoiseOptions);
   fn stop(&mut self, channel: Channel);
   fn set_gain(&mut self, channel: Channel, gain: f32);
+  fn set_stereo_gain(&mut self, channel: Channel, stereo_channel: StereoChannel, gain: f32);
   fn set_frequency(&mut self, channel: Channel, frequency: f32);
 
   fn mute_all(&mut self);

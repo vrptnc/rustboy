@@ -1,4 +1,4 @@
-pub struct RequestFlag(bool);
+pub struct RequestFlag(pub bool);
 
 impl RequestFlag {
   pub fn new() -> Self {

@@ -34,6 +34,20 @@ class PwmProcessor extends AudioWorkletProcessor {
                 maxValue: 1,
                 automationRate: "k-rate",
             },
+            {
+                name: "leftChannelGain",
+                defaultValue: 1.0,
+                minValue: 0,
+                maxValue: 1,
+                automationRate: "k-rate",
+            },
+            {
+                name: "rightChannelGain",
+                defaultValue: 1.0,
+                minValue: 0,
+                maxValue: 1,
+                automationRate: "k-rate",
+            },
         ];
     }
 
@@ -42,15 +56,20 @@ class PwmProcessor extends AudioWorkletProcessor {
         if (enabled) {
             const samplesPerWavelength = Math.floor(sampleRate / parameters.frequency[0])
             const highSamplesPerWavelength = Math.floor(samplesPerWavelength * parameters.dutyCycle[0])
+            const samples = []
+            for (let i = 0; i < 128; i++) {
+                if (this.currentSample > samplesPerWavelength) {
+                    this.currentSample = 0
+                }
+                const value = this.currentSample < highSamplesPerWavelength ? -1 : 1;
+                samples.push(value * parameters.gain[0])
+                this.currentSample++
+            }
             const output = outputs[0];
-            output.forEach((channel) => {
-                for (let i = 0; i < channel.length; i++) {
-                    if (this.currentSample > samplesPerWavelength) {
-                        this.currentSample = 0
-                    }
-                    const value = this.currentSample < highSamplesPerWavelength ? -1 : 1;
-                    channel[i] = value * parameters.gain[0]
-                    this.currentSample++
+            output.forEach((channel, channelIndex) => {
+                const channelGain = channelIndex === 0 ? parameters.leftChannelGain[0] : parameters.rightChannelGain[0]
+                for(let i = 0; i < 128; ++i) {
+                    channel[i] = samples[i] * channelGain
                 }
             });
         }
