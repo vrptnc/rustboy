@@ -1,22 +1,39 @@
 @import '../../styles/colors';
 
-.app {
-  display: grid;
-  box-sizing: border-box;
-  grid-template-areas:
-        "title title title title"
-        "menu menu menu menu"
-        "gameboy cpu-info . ."
-        "gameboy object-debugger tile-debugger audio-debugger";
-  grid-template-rows: 1fr 1fr 1fr;
+$gameboy-body-color: #989181;
+$center-panel-color: #282828;
+
+@font-face {
+  font-family: "Pixel";
+  src: url("../../../static/pixel-in.ttf") format("truetype");
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
   height: 100%;
   width: 100%;
-  padding: 15px;
   font-family: Roboto, Arial, sans-serif;
 }
 
+#root {
+  display: grid;
+  justify-items: center;
+  background-color: darken($center-panel-color, 10%);
+}
+
+.app {
+  display: grid;
+  box-sizing: border-box;
+  padding: 30px;
+  background-color: $center-panel-color;
+}
+
 .title {
-  grid-area: title;
+  font-family: "Pixel";
+  font-size: 6vw;
+  color: white;
+  text-shadow: 3px 10px 2px black;
 }
 
 .button-wrapper {
@@ -24,9 +41,19 @@
 }
 
 .gameboy {
-  grid-area: gameboy;
-  display: block;
-  position: relative;
+  padding: 5px;
+  border-radius: 10px 10px 40px 10px;
+  background-color: $gameboy-body-color;
+  box-shadow: inset 0px -5px rgba(0, 0, 0, 0.5),
+  inset 2px 0px rgba(0, 0, 0, 0.3),
+  inset -2px 0px rgba(0, 0, 0, 0.2);
+
+}
+
+#main-canvas {
+  background-color: white;
+  border-radius: 4px;
+  width: 100%;
 }
 
 .cpu-info {
@@ -49,9 +76,11 @@
   display: grid;
   grid-auto-rows: auto;
   grid-auto-columns: auto;
+
   & > h3 {
     grid-column: span 2;
   }
+
   width: fit-content;
   height: fit-content;
 }
@@ -61,14 +90,6 @@
   display: flex;
   flex-direction: row;
   gap: 15px;
-}
-
-#main-canvas {
-  position: absolute;
-  background-color: white;
-  top: 60px;
-  left: 75px;
-  width: 215px;
 }
 
 #object-canvas {
@@ -99,9 +120,11 @@
   display: block;
   cursor: pointer;
   padding: 8px;
+
   &:not(:first-child) {
     margin-left: 20px;
   }
+
   background-color: $button-color;
   color: white;
 
@@ -112,11 +135,4 @@
 
 .hidden {
   display: none;
-}
-
-html, body, #root {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  width: 100%;
 }

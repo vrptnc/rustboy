@@ -158,76 +158,79 @@ export const App = () => {
   }
 
   return <div className="app" onKeyDown={ onKeyDown } onKeyUp={ onKeyUp } tabIndex={ 0 }>
-    <h1 className="title">RustBoy</h1>
-    <div className="menu">
-      <div>
-        <label className="button" htmlFor="rom_selector">Choose ROM</label>
-        <input
-          className="hidden"
-          type="file"
-          id="rom_selector"
-          name="rom_selector"
-          accept=".gb, .gbc"
-          onChange={ handleRomChange }/>
-      </div>
-      <div>
-        <div className="button" onClick={ togglePaused }>
-          { paused ? 'Resume' : 'Pause' }
-        </div>
-      </div>
-      <div>
-        <div className="button" onClick={ doTick }>Tick</div>
-      </div>
-      <div>
-        <div className="button" onClick={ saveState }>
-          Save State
-        </div>
-      </div>
-    </div>
+    <div className="title">RustBoy</div>
     <div className="gameboy">
-      <img width={ "361px" } height={ "621px" } src={ gbImage }></img>
       <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>
     </div>
-    <div className="object-debugger">
-      <h3>OAM Content</h3>
-      <canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }
-              width={ 160 } height={ 32 }></canvas>
-      {
-        selectedObject ? <div id="object-info-container">
-          <div>X: { selectedObject.lcd_x }</div>
-          <div>Y: { selectedObject.lcd_y }</div>
-          <div>Tile Index: { selectedObject.tile_index }</div>
-          <div>Attributes: { `0x${ selectedObject.attributes.value().toString(16) }` }</div>
-        </div> : <React.Fragment/>
+    {/*<div className="menu">*/}
+    {/*  <div>*/}
+    {/*    <label className="button" htmlFor="rom_selector">Choose ROM</label>*/}
+    {/*    <input*/}
+    {/*      className="hidden"*/}
+    {/*      type="file"*/}
+    {/*      id="rom_selector"*/}
+    {/*      name="rom_selector"*/}
+    {/*      accept=".gb, .gbc"*/}
+    {/*      onChange={ handleRomChange }/>*/}
+    {/*  </div>*/}
+    {/*  <div>*/}
+    {/*    <div className="button" onClick={ togglePaused }>*/}
+    {/*      { paused ? 'Resume' : 'Pause' }*/}
+    {/*    </div>*/}
+    {/*  </div>*/}
+    {/*  <div>*/}
+    {/*    <div className="button" onClick={ doTick }>Tick</div>*/}
+    {/*  </div>*/}
+    {/*  <div>*/}
+    {/*    <div className="button" onClick={ saveState }>*/}
+    {/*      Save State*/}
+    {/*    </div>*/}
+    {/*  </div>*/}
+    {/*</div>*/}
+    {/*<div className="gameboy">*/}
+    {/*  <img width={ "361px" } height={ "621px" } src={ gbImage }></img>*/}
+    {/*  <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>*/}
+    {/*</div>*/}
+    {/*<div className="object-debugger">*/}
+    {/*  <h3>OAM Content</h3>*/}
+    {/*  <canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/}
+    {/*          width={ 160 } height={ 32 }></canvas>*/}
+    {/*  {*/}
+    {/*    selectedObject ? <div id="object-info-container">*/}
+    {/*      <div>X: { selectedObject.lcd_x }</div>*/}
+    {/*      <div>Y: { selectedObject.lcd_y }</div>*/}
+    {/*      <div>Tile Index: { selectedObject.tile_index }</div>*/}
+    {/*      <div>Attributes: { `0x${ selectedObject.attributes.value().toString(16) }` }</div>*/}
+    {/*    </div> : <React.Fragment/>*/}
 
-      }
-    </div>
-    <div className="tile-debugger">
-      <h3>Tile data</h3>
-      <canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>
-    </div>
-    <div className="audio-debugger">
-      <h3>Audio</h3>
-      <canvas id="ch1-canvas" width={ 200 } height={ 100 }></canvas>
-      <canvas id="ch2-canvas" width={ 200 } height={ 100 }></canvas>
-      <canvas id="ch3-canvas" width={ 200 } height={ 100 }></canvas>
-      <canvas id="ch4-canvas" width={ 200 } height={ 100 }></canvas>
-    </div>
-    <div className="cpu-info">
-      <h3>CPU Info</h3>
-      {
-        paused && cpuInfo != null ? <div>
-          <div>AF: 0x{ cpuInfo.AF?.toString(16) }</div>
-          <div>BC: 0x{ cpuInfo.BC?.toString(16) }</div>
-          <div>DE: 0x{ cpuInfo.DE?.toString(16) }</div>
-          <div>HL: 0x{ cpuInfo.HL?.toString(16) }</div>
-          <div>SP: 0x{ cpuInfo.SP?.toString(16) }</div>
-          <div>PC: 0x{ cpuInfo.PC?.toString(16) }</div>
-          <div>Stopped: { cpuInfo.stopped ? 'true' : 'false' }</div>
-          <div>Enabled: { cpuInfo.enabled ? 'true' : 'false' }</div>
-          <div>Instruction: { instruction }</div>
-        </div> : <React.Fragment/>
-      }
-    </div>
+    {/*  }*/}
+    {/*</div>*/}
+    {/*<div className="tile-debugger">*/}
+    {/*  <h3>Tile data</h3>*/}
+    {/*  <canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/}
+    {/*</div>*/}
+    {/*<div className="audio-debugger">*/}
+    {/*  <h3>Audio</h3>*/}
+    {/*  <canvas id="ch1-canvas" width={ 200 } height={ 100 }></canvas>*/}
+    {/*  <canvas id="ch2-canvas" width={ 200 } height={ 100 }></canvas>*/}
+    {/*  <canvas id="ch3-canvas" width={ 200 } height={ 100 }></canvas>*/}
+    {/*  <canvas id="ch4-canvas" width={ 200 } height={ 100 }></canvas>*/}
+    {/*</div>*/}
+    {/*<div className="cpu-info">*/}
+    {/*  <h3>CPU Info</h3>*/}
+    {/*  {*/}
+    {/*    paused && cpuInfo != null ? <div>*/}
+    {/*      <div>AF: 0x{ cpuInfo.AF?.toString(16) }</div>*/}
+    {/*      <div>BC: 0x{ cpuInfo.BC?.toString(16) }</div>*/}
+    {/*      <div>DE: 0x{ cpuInfo.DE?.toString(16) }</div>*/}
+    {/*      <div>HL: 0x{ cpuInfo.HL?.toString(16) }</div>*/}
+    {/*      <div>SP: 0x{ cpuInfo.SP?.toString(16) }</div>*/}
+    {/*      <div>PC: 0x{ cpuInfo.PC?.toString(16) }</div>*/}
+    {/*      <div>Stopped: { cpuInfo.stopped ? 'true' : 'false' }</div>*/}
+    {/*      <div>Enabled: { cpuInfo.enabled ? 'true' : 'false' }</div>*/}
+    {/*      <div>Instruction: { instruction }</div>*/}
+    {/*    </div> : <React.Fragment/>*/}
+    {/*  }*/}
+    {/*</div>*/}
   </div>
 }
