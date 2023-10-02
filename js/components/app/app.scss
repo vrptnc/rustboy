@@ -2,6 +2,9 @@
 
 $gameboy-body-color: #989181;
 $center-panel-color: #282828;
+$dpad-button-color: #3a3a3a;
+$dpad-button-border-radius: 2px;
+$action-button-color: #660459;
 
 @font-face {
   font-family: "Pixel";
@@ -41,19 +44,92 @@ html, body, #root {
 }
 
 .gameboy {
+  display: grid;
+  aspect-ratio: 5 / 8;
+  grid-template-rows: auto 1fr;
   padding: 5px;
   border-radius: 10px 10px 40px 10px;
   background-color: $gameboy-body-color;
   box-shadow: inset 0px -5px rgba(0, 0, 0, 0.5),
   inset 2px 0px rgba(0, 0, 0, 0.3),
   inset -2px 0px rgba(0, 0, 0, 0.2);
-
 }
 
 #main-canvas {
   background-color: white;
   border-radius: 4px;
   width: 100%;
+}
+
+.control-panel {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  grid-template-columns: repeat(10, 1fr);
+}
+
+.dpad-button {
+  background-color: $dpad-button-color;
+  border-radius: $dpad-button-border-radius;
+  box-shadow: 0 0 2px 2px rgba(0, 0, 0, 0.9);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+#up-button {
+  @extend .dpad-button;
+  clip-path: inset(-8px -8px 0px -8px);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  grid-row: 2;
+  grid-column: 3;
+}
+
+#down-button {
+  @extend .dpad-button;
+  clip-path: inset(0 -8px -8px -8px);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  grid-row: 4;
+  grid-column: 3;
+}
+
+#left-button {
+  @extend .dpad-button;
+  clip-path: inset(-8px 0 -8px -8px);
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  grid-row: 3;
+  grid-column: 2;
+}
+
+#right-button {
+  @extend .dpad-button;
+  clip-path: inset(-8px -8px -8px 0);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  grid-row: 3;
+  grid-column: 4;
+}
+
+#a-button {
+  border-radius: 50%;
+  background-color: $action-button-color;
+  box-shadow: 0 0 2px 2px rgba(0, 0, 0, 90%);
+  grid-row: 3;
+  grid-column: 9;
+}
+
+#b-button {
+  border-radius: 50%;
+  background-color: $action-button-color;
+  box-shadow: 0 0 2px 2px rgba(0, 0, 0, 90%);
+  grid-row: 4;
+  grid-column: 8;
+}
+
+#center-button {
+  background-color: $dpad-button-color;
+  grid-row: 3;
+  grid-column: 3;
 }
 
 .cpu-info {

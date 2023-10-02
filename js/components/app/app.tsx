@@ -161,6 +161,15 @@ export const App = () => {
     <div className="title">RustBoy</div>
     <div className="gameboy">
       <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>
+      <div className="control-panel">
+        <div id="up-button"></div>
+        <div id="down-button"></div>
+        <div id="left-button"></div>
+        <div id="right-button"></div>
+        <div id="center-button"></div>
+        <div id="a-button"></div>
+        <div id="b-button"></div>
+      </div>
     </div>
     {/*<div className="menu">*/}
     {/*  <div>*/}
