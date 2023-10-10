@@ -26,6 +26,12 @@ pub struct Color {
   pub transparent: bool,
 }
 
+pub enum RenderTarget {
+  Main,
+  ObjectAtlas,
+  TileAtlas
+}
+
 impl PartialEq for Color {
   fn eq(&self, other: &Self) -> bool {
     self.red == other.red &&
@@ -118,6 +124,7 @@ impl Color {
 
 #[automock]
 pub trait Renderer {
-  fn draw_pixel(&mut self, x: usize, y: usize, color: Color, drawing_priority: u8);
+  fn set_render_target_enabled(&mut self, target: RenderTarget, enabled: bool);
+  fn draw_pixel(&mut self, x: usize, y: usize, z: u8, color: Color, target: RenderTarget);
   fn flush(&mut self);
 }

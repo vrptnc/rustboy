@@ -36,12 +36,11 @@ use crate::memory::unmapped::UnmappedMemory;
 use crate::memory::vram::VRAMImpl;
 use crate::memory::wram::WRAMImpl;
 use crate::renderer::canvas_renderer::CanvasRenderer;
-use crate::renderer::renderer::Color;
+use crate::renderer::renderer::{Color, Renderer, RenderTarget};
 use crate::util::bit_util::BitUtil;
 use crate::util::instruction_label_provider::InstructionLabelProvider;
 
-#[wasm_bindgen]
-pub struct Emulator {
+pub struct Emulator<A: AudioDriver, R: Renderer> {
   rom: Rc<RefCell<dyn MBC>>,
   cpu: CPUImpl,
   cram: CRAMImpl,
@@ -51,9 +50,7 @@ pub struct Emulator {
   lcd: LCDControllerImpl,
   timer: TimerControllerImpl,
   dma: DMAControllerImpl,
-  renderer: CanvasRenderer,
-  obj_renderer: CanvasRenderer,
-  tile_renderer: CanvasRenderer,
+  renderer: R,
   interrupt_controller: InterruptControllerImpl,
   speed_controller: SpeedControllerImpl,
   button_controller: ButtonControllerImpl,
@@ -63,16 +60,15 @@ pub struct Emulator {
   reserved_area_1: LinearMemory::<0x1E00, 0xE000>,
   reserved_area_2: LinearMemory::<0x0060, 0xFEA0>,
   unmapped_memory: UnmappedMemory,
-  audio_driver: WebAudioDriver,
+  audio_driver: A,
 }
 
-#[wasm_bindgen]
-impl Emulator {
-  pub fn new(rom_bytes: &[u8], audio_context: AudioContext) -> Emulator {
+impl <A: AudioDriver, R: Renderer> Emulator<A, R> {
+  pub fn new(rom_bytes: &[u8], audio_driver: A, renderer: R) -> Self {
     panic::set_hook(Box::new(console_error_panic_hook::hook));
     let rom_size = ROMSize::from_byte(rom_bytes[0x0148]);
     let ram_size = RAMSize::from_byte(rom_bytes[0x0149]);
-    let rom = Emulator::create_rom(rom_bytes, rom_size, ram_size);
+    let rom = Emulator::<A, R>::create_rom(rom_bytes, rom_size, ram_size);
     let compatibility_byte = (*rom).borrow().compatibility_byte();
     let cgb_mode = CGBMode::from_byte(compatibility_byte);
     let mut cpu = CPUImpl::new();
@@ -93,11 +89,7 @@ impl Emulator {
     let reserved_area_2 = LinearMemory::<0x0060, 0xFEA0>::new();
     let interrupt_controller = InterruptControllerImpl::new();
     let speed_controller = SpeedControllerImpl::new();
-    let renderer = CanvasRenderer::new("main-canvas", Color::white(), 160, 144);
-    let tile_renderer = CanvasRenderer::new("tile-canvas", Color::transparent(), 256, 192);
-    let obj_renderer = CanvasRenderer::new("object-canvas", Color::transparent(), 160, 32);
     let unmapped_memory = UnmappedMemory::new();
-    let mut audio_driver = WebAudioDriver::new(audio_context);
 
     // If we're in compatibility/color mode, write the compatibility flag as is to KEY0
     // otherwise, write 0x04 to KEY0 and set the OPRI flag on the LCD to 0x01
@@ -132,8 +124,6 @@ impl Emulator {
       interrupt_controller,
       speed_controller,
       renderer,
-      obj_renderer,
-      tile_renderer,
       unmapped_memory,
       audio_driver,
     }
@@ -172,6 +162,14 @@ impl Emulator {
     self.button_controller.release_button(button);
   }
 
+  pub fn set_tile_atlas_rendering_enabled(&mut self, enabled: bool) {
+    self.renderer.set_render_target_enabled(RenderTarget::TileAtlas, enabled);
+  }
+
+  pub fn set_object_atlas_rendering_enabled(&mut self, enabled: bool) {
+    self.renderer.set_render_target_enabled(RenderTarget::ObjectAtlas, enabled);
+  }
+
   pub fn cpu_info(&self) -> CPUInfo {
     self.cpu.cpu_info()
   }
@@ -206,10 +204,6 @@ impl Emulator {
     }, self.lcd.use_8_x_16_tiles())
   }
 
-  pub fn draw(&mut self) {
-    self.audio_driver.draw();
-  }
-
   pub fn tick(&mut self) {
     let double_speed = self.speed_controller.double_speed();
     let mut memory_bus = MemoryBus {
@@ -237,7 +231,7 @@ impl Emulator {
     self.button_controller.tick(&mut self.interrupt_controller);
     self.audio_controller.tick(&mut self.audio_driver, &mut self.timer, double_speed);
     self.timer.tick(&mut self.interrupt_controller);
-    self.lcd.tick(&self.vram, &self.cram, &self.oam, &mut self.renderer, &mut self.obj_renderer, &mut self.tile_renderer, &mut self.interrupt_controller, double_speed);
+    self.lcd.tick(&self.vram, &self.cram, &self.oam, &mut self.renderer, &mut self.interrupt_controller, double_speed);
     let mut dma_memory_bus = DMAMemoryBus {
       rom: Rc::clone(&self.rom),
       vram: &mut self.vram,

@@ -2,12 +2,14 @@ use std::cmp;
 
 use js_sys::{Array, Number};
 use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{AnalyserNode, AudioBuffer, AudioBufferSourceNode, AudioContext, AudioParamMap, AudioWorkletNode, AudioWorkletNodeOptions, BiquadFilterNode, BiquadFilterType, CanvasRenderingContext2d, console, GainNode, window};
 
 use crate::audio::audio_driver::{AudioDriver, Channel, CustomWaveOptions, DutyCycle, NoiseOptions, PulseOptions, StereoChannel};
 use crate::renderer::canvas_renderer::CanvasRenderer;
 
+#[wasm_bindgen]
 pub struct WebAudioDriver {
   context: AudioContext,
   ch1_node: AudioWorkletNode,
@@ -22,17 +24,16 @@ pub struct WebAudioDriver {
   // ch2_analyser_node: AnalyserNode,
   // ch3_analyser_node: AnalyserNode,
   // ch4_analyser_node: AnalyserNode,
-  ch1_canvas_context: CanvasRenderingContext2d,
-  ch2_canvas_context: CanvasRenderingContext2d,
-  ch3_canvas_context: CanvasRenderingContext2d,
-  ch4_canvas_context: CanvasRenderingContext2d,
+  // ch1_canvas_context: CanvasRenderingContext2d,
+  // ch2_canvas_context: CanvasRenderingContext2d,
+  // ch3_canvas_context: CanvasRenderingContext2d,
+  // ch4_canvas_context: CanvasRenderingContext2d,
   mixer_node: GainNode,
   high_pass_filter_node: BiquadFilterNode,
 }
 
+#[wasm_bindgen]
 impl WebAudioDriver {
-  const FFT_SIZE: u32 = 128u32;
-
   pub fn draw(&mut self) {
     // self.draw_channel(Channel::CH1);
     // self.draw_channel(Channel::CH2);
@@ -90,19 +91,19 @@ impl WebAudioDriver {
     // ch3_analyser_node.set_fft_size(WebAudioDriver::FFT_SIZE);
     // let ch4_analyser_node = context.create_analyser().unwrap();
     // ch4_analyser_node.set_fft_size(WebAudioDriver::FFT_SIZE);
-    let black_style = JsValue::from_str("rgb(0, 0, 0");
-    let ch1_canvas_context = CanvasRenderer::get_context("ch1-canvas");
-    ch1_canvas_context.set_line_width(2.0);
-    ch1_canvas_context.set_stroke_style(&black_style);
-    let ch2_canvas_context = CanvasRenderer::get_context("ch2-canvas");
-    ch2_canvas_context.set_line_width(2.0);
-    ch2_canvas_context.set_stroke_style(&black_style);
-    let ch3_canvas_context = CanvasRenderer::get_context("ch3-canvas");
-    ch3_canvas_context.set_line_width(2.0);
-    ch3_canvas_context.set_stroke_style(&black_style);
-    let ch4_canvas_context = CanvasRenderer::get_context("ch4-canvas");
-    ch4_canvas_context.set_line_width(2.0);
-    ch4_canvas_context.set_stroke_style(&black_style);
+    // let black_style = JsValue::from_str("rgb(0, 0, 0");
+    // let ch1_canvas_context = CanvasRenderer::get_context("ch1-canvas");
+    // ch1_canvas_context.set_line_width(2.0);
+    // ch1_canvas_context.set_stroke_style(&black_style);
+    // let ch2_canvas_context = CanvasRenderer::get_context("ch2-canvas");
+    // ch2_canvas_context.set_line_width(2.0);
+    // ch2_canvas_context.set_stroke_style(&black_style);
+    // let ch3_canvas_context = CanvasRenderer::get_context("ch3-canvas");
+    // ch3_canvas_context.set_line_width(2.0);
+    // ch3_canvas_context.set_stroke_style(&black_style);
+    // let ch4_canvas_context = CanvasRenderer::get_context("ch4-canvas");
+    // ch4_canvas_context.set_line_width(2.0);
+    // ch4_canvas_context.set_stroke_style(&black_style);
 
     let mixer_node = context.create_gain().unwrap();
     let high_pass_filter_node = context.create_biquad_filter().unwrap();
@@ -139,10 +140,10 @@ impl WebAudioDriver {
       // ch2_analyser_node,
       // ch3_analyser_node,
       // ch4_analyser_node,
-      ch1_canvas_context,
-      ch2_canvas_context,
-      ch3_canvas_context,
-      ch4_canvas_context,
+      // ch1_canvas_context,
+      // ch2_canvas_context,
+      // ch3_canvas_context,
+      // ch4_canvas_context,
       mixer_node,
       high_pass_filter_node,
     }

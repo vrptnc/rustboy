@@ -1,4 +1,4 @@
-import {Button, CPUInfo, Emulator, OAMObject} from '../../../pkg/rustboy';
+import {Button, CPUInfo, WebEmulator, OAMObject} from '../../../pkg/rustboy';
 import React, {FormEvent, KeyboardEvent, MouseEvent, useEffect, useRef, useState} from 'react'
 import {saveAs} from 'file-saver'
 import './app.scss'
@@ -7,12 +7,11 @@ import gbImage from '../../images/gb.png'
 
 export const App = () => {
 
-  const [emulator, setEmulator] = useState<Emulator>()
+  const [emulator, setEmulator] = useState<WebEmulator>()
   const [paused, setPaused] = useState<boolean>(false)
   const [objectInfoIndex, setObjectInfoIndex] = useState<number>()
   const [selectedObject, setSelectedObject] = useState<OAMObject>()
   const [cpuInfo, setCPUInfo] = useState<CPUInfo>()
-  const [instruction, setInstruction] = useState<string>()
   const previousTimeRef = useRef<number>()
   const animationFrameId = useRef<number>()
   const buttonMapping: Record<string, Button> = {
@@ -48,30 +47,28 @@ export const App = () => {
       previousTimeRef.current = undefined
       const info = emulator?.cpu_info();
       setCPUInfo(info)
-      setInstruction(emulator?.get_instruction_label(info?.PC ?? 0))
     }
     setPaused(!paused)
   }
 
-  const doTick = () => {
-    if (paused) {
-      emulator?.execute_machine_cycle()
-      const info = emulator?.cpu_info();
-      setCPUInfo(info)
-      setInstruction(emulator?.get_instruction_label(info?.PC ?? 0))
-    }
-  }
+  // const doTick = () => {
+  //   if (paused) {
+  //     emulator?.execute_machine_cycle()
+  //     const info = emulator?.cpu_info();
+  //     setCPUInfo(info)
+  //   }
+  // }
 
-  const saveState = () => {
-    if (emulator) {
-      setPaused(true)
-      const state = emulator.get_state()
-      const blob = new Blob([state.buffer], {
-        type: 'application/octet-stream'
-      })
-      saveAs(blob, 'state.bin')
-    }
-  }
+  // const saveState = () => {
+  //   if (emulator) {
+  //     setPaused(true)
+  //     const state = emulator.get_state()
+  //     const blob = new Blob([state.buffer], {
+  //       type: 'application/octet-stream'
+  //     })
+  //     saveAs(blob, 'state.bin')
+  //   }
+  // }
 
   useEffect(() => {
     if (animationFrameId.current != null) {
@@ -91,6 +88,14 @@ export const App = () => {
     }
 
   }, [objectInfoIndex])
+
+  const getMouseDownHandler = (button: Button) => () => {
+    emulator?.press_button(button)
+  }
+
+  const getMouseUpHandler = (button: Button) => () => {
+    emulator?.release_button(button)
+  }
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (emulator == null) {
@@ -150,7 +155,7 @@ export const App = () => {
         await audioContext.audioWorklet.addModule("pwm-processor.js")
         await audioContext.audioWorklet.addModule("waveform-processor.js")
         await audioContext.audioWorklet.addModule("white-noise-processor.js")
-        const newEmulator = Emulator.new(byteArray, audioContext);
+        const newEmulator = WebEmulator.new(byteArray, audioContext);
         setEmulator(newEmulator)
         requestAnimationFrame(drawChannels(newEmulator))
       }
@@ -159,43 +164,41 @@ export const App = () => {
 
   return <div className="app" onKeyDown={ onKeyDown } onKeyUp={ onKeyUp } tabIndex={ 0 }>
     <div className="title">RustBoy</div>
-    <div className="gameboy">
-      <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>
-      <div className="control-panel">
-        <div id="up-button"></div>
-        <div id="down-button"></div>
-        <div id="left-button"></div>
-        <div id="right-button"></div>
-        <div id="center-button"></div>
-        <div id="a-button"></div>
-        <div id="b-button"></div>
-      </div>
-    </div>
     {/*<div className="menu">*/}
     {/*  <div>*/}
     {/*    <label className="button" htmlFor="rom_selector">Choose ROM</label>*/}
     {/*    <input*/}
-    {/*      className="hidden"*/}
-    {/*      type="file"*/}
-    {/*      id="rom_selector"*/}
-    {/*      name="rom_selector"*/}
-    {/*      accept=".gb, .gbc"*/}
-    {/*      onChange={ handleRomChange }/>*/}
+    {/*        className="hidden"*/}
+    {/*        type="file"*/}
+    {/*        id="rom_selector"*/}
+    {/*        name="rom_selector"*/}
+    {/*        accept=".gb, .gbc"*/}
+    {/*        onChange={ handleRomChange }/>*/}
     {/*  </div>*/}
     {/*  <div>*/}
     {/*    <div className="button" onClick={ togglePaused }>*/}
     {/*      { paused ? 'Resume' : 'Pause' }*/}
     {/*    </div>*/}
     {/*  </div>*/}
-    {/*  <div>*/}
-    {/*    <div className="button" onClick={ doTick }>Tick</div>*/}
-    {/*  </div>*/}
-    {/*  <div>*/}
-    {/*    <div className="button" onClick={ saveState }>*/}
-    {/*      Save State*/}
-    {/*    </div>*/}
-    {/*  </div>*/}
     {/*</div>*/}
+      {/*<canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/}
+      {/*        width={ 160 } height={ 32 }></canvas>*/}
+    {/*<canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/}
+    <div className="gameboy">
+      <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>
+      <div className="control-panel">
+        <div id="up-button" onMouseDown={getMouseDownHandler(Button.UP)} onMouseUp={getMouseUpHandler(Button.UP)}></div>
+        <div id="down-button" onMouseDown={getMouseDownHandler(Button.DOWN)} onMouseUp={getMouseUpHandler(Button.DOWN)}></div>
+        <div id="left-button" onMouseDown={getMouseDownHandler(Button.LEFT)} onMouseUp={getMouseUpHandler(Button.LEFT)}></div>
+        <div id="right-button" onMouseDown={getMouseDownHandler(Button.RIGHT)} onMouseUp={getMouseUpHandler(Button.RIGHT)}></div>
+        <div id="center-button"></div>
+        <div className="action-panel">
+          <div id="a-button" onMouseDown={getMouseDownHandler(Button.A)} onMouseUp={getMouseUpHandler(Button.A)}></div>
+          <div id="b-button" onMouseDown={getMouseDownHandler(Button.B)} onMouseUp={getMouseUpHandler(Button.B)}></div>
+        </div>
+      </div>
+    </div>
+
     {/*<div className="gameboy">*/}
     {/*  <img width={ "361px" } height={ "621px" } src={ gbImage }></img>*/}
     {/*  <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>*/}

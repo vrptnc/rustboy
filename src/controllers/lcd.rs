@@ -12,7 +12,7 @@ use crate::memory::mbc::MockROM;
 use crate::memory::memory::{CGBMode, Memory, MemoryAddress};
 use crate::memory::oam::{OAM, OAMObject, ObjectReference};
 use crate::memory::vram::{BackgroundParams, ObjectParams, VRAM, WindowParams};
-use crate::renderer::renderer::{Color, Point, Renderer, TileAddressingMode, TileMapIndex};
+use crate::renderer::renderer::{Color, Point, Renderer, RenderTarget, TileAddressingMode, TileMapIndex};
 use crate::util::bit_util::BitUtil;
 
 const DOTS_PER_FRAME: u32 = 70224;
@@ -193,14 +193,14 @@ impl LCDControllerImpl {
       .map(|color_ref| (color_ref, if self.opri == 1 { cram.monochrome_background_color(color_ref) } else { cram.background_color(color_ref) }))
       .enumerate()
       .for_each(|(x, (color_ref, color))| {
-        let bg_drawing_priority = if color_ref.color_index == 0 || !self.lcdc.bg_priority() {
+        let background_draw_depth = if color_ref.color_index == 0 || !self.lcdc.bg_priority() {
           0
         } else if color_ref.foreground {
           6
         } else {
           3
         };
-        renderer.draw_pixel(x, self.line as usize, color, bg_drawing_priority)
+        renderer.draw_pixel(x, self.line as usize, background_draw_depth, color, RenderTarget::Main)
       });
   }
 
@@ -234,7 +234,7 @@ impl LCDControllerImpl {
         .enumerate()
         .skip(if self.wx < 7 { 7 - self.wx as usize } else { 0 })
         .for_each(|(x, (color_ref, color))| {
-          renderer.draw_pixel(x + self.wx as usize - 7, self.line as usize, color, 0xFF);
+          renderer.draw_pixel(x + self.wx as usize - 7, self.line as usize, 0xFF, color, RenderTarget::Main);
         });
     }
   }
@@ -270,12 +270,12 @@ impl LCDControllerImpl {
           .skip(if object.lcd_x < 8 { 8 - object.lcd_x } else { 0 } as usize)
           .take(if object.lcd_x > 160 { 168 - object.lcd_x } else { 8 } as usize)
           .for_each(|(pixel_offset, (color_ref, color))| {
-            let obj_drawing_priority = if color_ref.foreground {
+            let obj_draw_depth = if color_ref.foreground {
               5
             } else {
               2
             };
-            renderer.draw_pixel(object.lcd_x as usize + pixel_offset - 8, self.line as usize, color, obj_drawing_priority);
+            renderer.draw_pixel(object.lcd_x as usize + pixel_offset - 8, self.line as usize, obj_draw_depth, color, RenderTarget::Main);
           });
       });
   }
@@ -307,7 +307,7 @@ impl LCDControllerImpl {
             .map(|color_ref| (color_ref, if self.opri == 1 { cram.monochrome_object_color(color_ref) } else { cram.object_color(color_ref) }))
             .enumerate()
             .for_each(|(pixel_offset, (color_ref, color))| {
-              renderer.draw_pixel(column_offset as usize + pixel_offset, self.line as usize, color, 5);
+              renderer.draw_pixel(column_offset as usize + pixel_offset, self.line as usize, 5, color, RenderTarget::ObjectAtlas);
             });
         })
     }
@@ -327,13 +327,13 @@ impl LCDControllerImpl {
             })
             .enumerate()
             .for_each(|(pixel_offset, color)| {
-              renderer.draw_pixel(pixel_offset, line as usize, color, 5);
+              renderer.draw_pixel(pixel_offset, line as usize, 5, color, RenderTarget::TileAtlas);
             });
         });
     }
   }
 
-  fn draw_line(&self, vram: &dyn VRAM, cram: &dyn CRAM, oam: &dyn OAM, renderer: &mut dyn Renderer, obj_renderer: &mut dyn Renderer, tile_renderer: &mut dyn Renderer) {
+  fn draw_line(&self, vram: &dyn VRAM, cram: &dyn CRAM, oam: &dyn OAM, renderer: &mut dyn Renderer) {
     // // 1) Draw background
     self.draw_background_line(vram, cram, renderer);
     // // 2) Draw window line
@@ -341,9 +341,9 @@ impl LCDControllerImpl {
     // 3) Draw OBJ
     self.draw_obj_line(vram, cram, oam, renderer);
     // 4) Draw OBJ atlas
-    self.draw_obj_atlas_line(vram, cram, oam, obj_renderer);
+    self.draw_obj_atlas_line(vram, cram, oam, renderer);
     // 5) Draw Tile atlas
-    self.draw_tile_atlas_line(vram, tile_renderer);
+    self.draw_tile_atlas_line(vram, renderer);
   }
 
   fn update_mode(&mut self) {
@@ -371,8 +371,6 @@ impl LCDControllerImpl {
 
   pub fn tick(&mut self, vram: &dyn VRAM, cram: &dyn CRAM, oam: &dyn OAM,
               renderer: &mut dyn Renderer,
-              obj_renderer: &mut dyn Renderer,
-              tile_renderer: &mut dyn Renderer,
               interrupt_controller: &mut dyn InterruptController,
               double_speed: bool) {
     /*
@@ -401,8 +399,6 @@ impl LCDControllerImpl {
         if self.column == 0 && self.line == 144 {
           interrupt_controller.request_interrupt(Interrupt::VerticalBlank);
           renderer.flush();
-          obj_renderer.flush();
-          tile_renderer.flush();
         }
       }
       LCDMode::Mode2 => {
@@ -412,7 +408,7 @@ impl LCDControllerImpl {
       LCDMode::Mode3 => {
         // TODO Examine whether drawing the entire line at once is the best way to go, maybe we should draw it progressively
         if !self.line_rendered {
-          self.draw_line(vram, cram, oam, renderer, obj_renderer, tile_renderer);
+          self.draw_line(vram, cram, oam, renderer);
           self.line_rendered = true;
         }
       }
@@ -467,8 +463,6 @@ pub mod tests {
   fn stat_blocking() {
     let mut controller = LCDControllerImpl::new(CGBMode::Color);
     let mut renderer = MockRenderer::new();
-    let mut obj_renderer = MockRenderer::new();
-    let mut tile_renderer = MockRenderer::new();
     let mut interrupt_controller = MockInterruptController::new();
     interrupt_controller.expect_request_interrupt().never();
     let vram = MockVRAM::new();
@@ -477,14 +471,14 @@ pub mod tests {
     oam.expect_get_object_reference_if_intersects().return_const(None);
     // Advance to right before HBlank
     for _ in 0..248 {
-      controller.tick(&vram, &cram, &oam, &mut renderer, &mut obj_renderer, &mut tile_renderer, &mut interrupt_controller, false);
+      controller.tick(&vram, &cram, &oam, &mut renderer, &mut interrupt_controller, false);
     }
     controller.write(MemoryAddress::STAT, 0x28); // Enable STAT interrupt for Mode 2 and HBlank
     interrupt_controller.expect_request_interrupt().with(eq(Interrupt::Stat)).once();
-    controller.tick(&vram, &cram, &oam, &mut renderer, &mut obj_renderer, &mut tile_renderer, &mut interrupt_controller, false); // Enter HBlank
+    controller.tick(&vram, &cram, &oam, &mut renderer, &mut interrupt_controller, false); // Enter HBlank
     // Advance to well within Mode 2 of the next line. No additional interrupt should be requested due to STAT blocking
     for _ in 249..500 {
-      controller.tick(&vram, &cram, &oam, &mut renderer, &mut obj_renderer, &mut tile_renderer, &mut interrupt_controller, false);
+      controller.tick(&vram, &cram, &oam, &mut renderer, &mut interrupt_controller, false);
     }
   }
 }
