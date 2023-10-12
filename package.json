@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "clean": "npx rimraf dist pkg",
+    "clean-all": "npm run clean && npx rimraf target",
     "prod:build": "npm run clean && npx webpack --mode production --config webpack.config.prod.js",
-    "dev:build": "cross-env NODE_ENV=development webpack --mode development",
+    "dev:build": "npx cross-env NODE_ENV=development webpack --mode development",
     "rust:build": "cargo build --release --target wasm32-unknown-unknown && wasm-bindgen target/wasm32-unknown-unknown/release/rustboy.wasm --target=web --out-dir=pkg --omit-default-module-path",
     "dev:start": "npm run clean && npm run rust:build && npm run dev:build && npx webpack serve"
   },
@@ -42,6 +43,7 @@
     "babel-loader": "^8.2.2",
     "babel-plugin-transform-class-properties": "^6.24.1",
     "copy-webpack-plugin": "^8.0.0",
+    "cross-env": "^7.0.3",
     "css-loader": "^5.1.2",
     "html-webpack-plugin": "^5.3.1",
     "jest": "^27.0.6",

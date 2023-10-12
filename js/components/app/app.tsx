@@ -1,6 +1,5 @@
-import {Button, CPUInfo, WebEmulator, OAMObject} from '../../../pkg/rustboy';
+import {Button, CPUInfo, OAMObject, WebEmulator} from '../../../pkg/rustboy';
 import React, {FormEvent, KeyboardEvent, MouseEvent, useEffect, useRef, useState} from 'react'
-import {saveAs} from 'file-saver'
 import './app.scss'
 // @ts-ignore
 import gbImage from '../../images/gb.png'
@@ -164,85 +163,107 @@ export const App = () => {
 
   return <div className="app" onKeyDown={ onKeyDown } onKeyUp={ onKeyUp } tabIndex={ 0 }>
     <div className="title">RustBoy</div>
-    {/*<div className="menu">*/}
-    {/*  <div>*/}
-    {/*    <label className="button" htmlFor="rom_selector">Choose ROM</label>*/}
-    {/*    <input*/}
-    {/*        className="hidden"*/}
-    {/*        type="file"*/}
-    {/*        id="rom_selector"*/}
-    {/*        name="rom_selector"*/}
-    {/*        accept=".gb, .gbc"*/}
-    {/*        onChange={ handleRomChange }/>*/}
-    {/*  </div>*/}
-    {/*  <div>*/}
-    {/*    <div className="button" onClick={ togglePaused }>*/}
-    {/*      { paused ? 'Resume' : 'Pause' }*/}
-    {/*    </div>*/}
-    {/*  </div>*/}
-    {/*</div>*/}
-      {/*<canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/}
-      {/*        width={ 160 } height={ 32 }></canvas>*/}
-    {/*<canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/}
+    <div className="button-bar">
+      <div>
+        <label className="button" htmlFor="rom_selector">Choose ROM</label>
+        <input
+          className="hidden"
+          type="file"
+          id="rom_selector"
+          name="rom_selector"
+          accept=".gb, .gbc"
+          onChange={ handleRomChange }/>
+      </div>
+    </div>
+    {/*<div className="menu">*/ }
+    {/*  <div>*/ }
+    {/*    <label className="button" htmlFor="rom_selector">Choose ROM</label>*/ }
+    {/*    <input*/ }
+    {/*        className="hidden"*/ }
+    {/*        type="file"*/ }
+    {/*        id="rom_selector"*/ }
+    {/*        name="rom_selector"*/ }
+    {/*        accept=".gb, .gbc"*/ }
+    {/*        onChange={ handleRomChange }/>*/ }
+    {/*  </div>*/ }
+    {/*  <div>*/ }
+    {/*    <div className="button" onClick={ togglePaused }>*/ }
+    {/*      { paused ? 'Resume' : 'Pause' }*/ }
+    {/*    </div>*/ }
+    {/*  </div>*/ }
+    {/*</div>*/ }
+    {/*<canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/ }
+    {/*        width={ 160 } height={ 32 }></canvas>*/ }
+    {/*<canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/ }
     <div className="gameboy">
       <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>
       <div className="control-panel">
-        <div id="up-button" onMouseDown={getMouseDownHandler(Button.UP)} onMouseUp={getMouseUpHandler(Button.UP)}></div>
-        <div id="down-button" onMouseDown={getMouseDownHandler(Button.DOWN)} onMouseUp={getMouseUpHandler(Button.DOWN)}></div>
-        <div id="left-button" onMouseDown={getMouseDownHandler(Button.LEFT)} onMouseUp={getMouseUpHandler(Button.LEFT)}></div>
-        <div id="right-button" onMouseDown={getMouseDownHandler(Button.RIGHT)} onMouseUp={getMouseUpHandler(Button.RIGHT)}></div>
+        <div id="up-button" onMouseDown={ getMouseDownHandler(Button.UP) }
+             onMouseUp={ getMouseUpHandler(Button.UP) }></div>
+        <div id="down-button" onMouseDown={ getMouseDownHandler(Button.DOWN) }
+             onMouseUp={ getMouseUpHandler(Button.DOWN) }></div>
+        <div id="left-button" onMouseDown={ getMouseDownHandler(Button.LEFT) }
+             onMouseUp={ getMouseUpHandler(Button.LEFT) }></div>
+        <div id="right-button" onMouseDown={ getMouseDownHandler(Button.RIGHT) }
+             onMouseUp={ getMouseUpHandler(Button.RIGHT) }></div>
         <div id="center-button"></div>
         <div className="action-panel">
-          <div id="a-button" onMouseDown={getMouseDownHandler(Button.A)} onMouseUp={getMouseUpHandler(Button.A)}></div>
-          <div id="b-button" onMouseDown={getMouseDownHandler(Button.B)} onMouseUp={getMouseUpHandler(Button.B)}></div>
+          <div id="a-button" className="action-button" onMouseDown={ getMouseDownHandler(Button.A) }
+               onMouseUp={ getMouseUpHandler(Button.A) }>
+            <div className="label">A</div>
+          </div>
+          <div id="b-button" className="action-button" onMouseDown={ getMouseDownHandler(Button.B) }
+               onMouseUp={ getMouseUpHandler(Button.B) }>
+            <div className="label">B</div>
+          </div>
         </div>
       </div>
     </div>
 
-    {/*<div className="gameboy">*/}
-    {/*  <img width={ "361px" } height={ "621px" } src={ gbImage }></img>*/}
-    {/*  <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>*/}
-    {/*</div>*/}
-    {/*<div className="object-debugger">*/}
-    {/*  <h3>OAM Content</h3>*/}
-    {/*  <canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/}
-    {/*          width={ 160 } height={ 32 }></canvas>*/}
-    {/*  {*/}
-    {/*    selectedObject ? <div id="object-info-container">*/}
-    {/*      <div>X: { selectedObject.lcd_x }</div>*/}
-    {/*      <div>Y: { selectedObject.lcd_y }</div>*/}
-    {/*      <div>Tile Index: { selectedObject.tile_index }</div>*/}
-    {/*      <div>Attributes: { `0x${ selectedObject.attributes.value().toString(16) }` }</div>*/}
-    {/*    </div> : <React.Fragment/>*/}
+    {/*<div className="gameboy">*/ }
+    {/*  <img width={ "361px" } height={ "621px" } src={ gbImage }></img>*/ }
+    {/*  <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>*/ }
+    {/*</div>*/ }
+    {/*<div className="object-debugger">*/ }
+    {/*  <h3>OAM Content</h3>*/ }
+    {/*  <canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/ }
+    {/*          width={ 160 } height={ 32 }></canvas>*/ }
+    {/*  {*/ }
+    {/*    selectedObject ? <div id="object-info-container">*/ }
+    {/*      <div>X: { selectedObject.lcd_x }</div>*/ }
+    {/*      <div>Y: { selectedObject.lcd_y }</div>*/ }
+    {/*      <div>Tile Index: { selectedObject.tile_index }</div>*/ }
+    {/*      <div>Attributes: { `0x${ selectedObject.attributes.value().toString(16) }` }</div>*/ }
+    {/*    </div> : <React.Fragment/>*/ }
 
-    {/*  }*/}
-    {/*</div>*/}
-    {/*<div className="tile-debugger">*/}
-    {/*  <h3>Tile data</h3>*/}
-    {/*  <canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/}
-    {/*</div>*/}
-    {/*<div className="audio-debugger">*/}
-    {/*  <h3>Audio</h3>*/}
-    {/*  <canvas id="ch1-canvas" width={ 200 } height={ 100 }></canvas>*/}
-    {/*  <canvas id="ch2-canvas" width={ 200 } height={ 100 }></canvas>*/}
-    {/*  <canvas id="ch3-canvas" width={ 200 } height={ 100 }></canvas>*/}
-    {/*  <canvas id="ch4-canvas" width={ 200 } height={ 100 }></canvas>*/}
-    {/*</div>*/}
-    {/*<div className="cpu-info">*/}
-    {/*  <h3>CPU Info</h3>*/}
-    {/*  {*/}
-    {/*    paused && cpuInfo != null ? <div>*/}
-    {/*      <div>AF: 0x{ cpuInfo.AF?.toString(16) }</div>*/}
-    {/*      <div>BC: 0x{ cpuInfo.BC?.toString(16) }</div>*/}
-    {/*      <div>DE: 0x{ cpuInfo.DE?.toString(16) }</div>*/}
-    {/*      <div>HL: 0x{ cpuInfo.HL?.toString(16) }</div>*/}
-    {/*      <div>SP: 0x{ cpuInfo.SP?.toString(16) }</div>*/}
-    {/*      <div>PC: 0x{ cpuInfo.PC?.toString(16) }</div>*/}
-    {/*      <div>Stopped: { cpuInfo.stopped ? 'true' : 'false' }</div>*/}
-    {/*      <div>Enabled: { cpuInfo.enabled ? 'true' : 'false' }</div>*/}
-    {/*      <div>Instruction: { instruction }</div>*/}
-    {/*    </div> : <React.Fragment/>*/}
-    {/*  }*/}
-    {/*</div>*/}
+    {/*  }*/ }
+    {/*</div>*/ }
+    {/*<div className="tile-debugger">*/ }
+    {/*  <h3>Tile data</h3>*/ }
+    {/*  <canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/ }
+    {/*</div>*/ }
+    {/*<div className="audio-debugger">*/ }
+    {/*  <h3>Audio</h3>*/ }
+    {/*  <canvas id="ch1-canvas" width={ 200 } height={ 100 }></canvas>*/ }
+    {/*  <canvas id="ch2-canvas" width={ 200 } height={ 100 }></canvas>*/ }
+    {/*  <canvas id="ch3-canvas" width={ 200 } height={ 100 }></canvas>*/ }
+    {/*  <canvas id="ch4-canvas" width={ 200 } height={ 100 }></canvas>*/ }
+    {/*</div>*/ }
+    {/*<div className="cpu-info">*/ }
+    {/*  <h3>CPU Info</h3>*/ }
+    {/*  {*/ }
+    {/*    paused && cpuInfo != null ? <div>*/ }
+    {/*      <div>AF: 0x{ cpuInfo.AF?.toString(16) }</div>*/ }
+    {/*      <div>BC: 0x{ cpuInfo.BC?.toString(16) }</div>*/ }
+    {/*      <div>DE: 0x{ cpuInfo.DE?.toString(16) }</div>*/ }
+    {/*      <div>HL: 0x{ cpuInfo.HL?.toString(16) }</div>*/ }
+    {/*      <div>SP: 0x{ cpuInfo.SP?.toString(16) }</div>*/ }
+    {/*      <div>PC: 0x{ cpuInfo.PC?.toString(16) }</div>*/ }
+    {/*      <div>Stopped: { cpuInfo.stopped ? 'true' : 'false' }</div>*/ }
+    {/*      <div>Enabled: { cpuInfo.enabled ? 'true' : 'false' }</div>*/ }
+    {/*      <div>Instruction: { instruction }</div>*/ }
+    {/*    </div> : <React.Fragment/>*/ }
+    {/*  }*/ }
+    {/*</div>*/ }
   </div>
 }

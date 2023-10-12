@@ -1,8 +1,7 @@
-use std::iter;
+use std::{iter, vec};
 
-use js_sys::Object;
 use wasm_bindgen::{Clamped, JsCast};
-use web_sys::{CanvasRenderingContext2d, console, HtmlCanvasElement, ImageData, Window};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, Window};
 
 use crate::renderer::renderer::{Color, Renderer, RenderTarget};
 
@@ -110,8 +109,8 @@ impl CanvasRenderer {
       background_color,
       width,
       height,
-      color_buffer: Vec::with_capacity(4 * width * height),
-      depth_buffer: Vec::with_capacity(width * height),
+      color_buffer: vec![0; 4 * width * height],
+      depth_buffer: vec![0; width * height],
     };
     renderer.clear_canvas();
     renderer
