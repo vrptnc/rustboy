@@ -1,5 +1,6 @@
 import {Button, CPUInfo, OAMObject, WebEmulator} from '../../../pkg/rustboy';
 import React, {FormEvent, KeyboardEvent, MouseEvent, useEffect, useRef, useState} from 'react'
+import {ControlPanel} from "../control-panel/control-panel";
 import './app.scss'
 // @ts-ignore
 import gbImage from '../../images/gb.png'
@@ -88,13 +89,7 @@ export const App = () => {
 
   }, [objectInfoIndex])
 
-  const getMouseDownHandler = (button: Button) => () => {
-    emulator?.press_button(button)
-  }
 
-  const getMouseUpHandler = (button: Button) => () => {
-    emulator?.release_button(button)
-  }
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (emulator == null) {
@@ -197,27 +192,7 @@ export const App = () => {
     {/*<canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/ }
     <div className="gameboy">
       <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>
-      <div className="control-panel">
-        <div id="up-button" onMouseDown={ getMouseDownHandler(Button.UP) }
-             onMouseUp={ getMouseUpHandler(Button.UP) }></div>
-        <div id="down-button" onMouseDown={ getMouseDownHandler(Button.DOWN) }
-             onMouseUp={ getMouseUpHandler(Button.DOWN) }></div>
-        <div id="left-button" onMouseDown={ getMouseDownHandler(Button.LEFT) }
-             onMouseUp={ getMouseUpHandler(Button.LEFT) }></div>
-        <div id="right-button" onMouseDown={ getMouseDownHandler(Button.RIGHT) }
-             onMouseUp={ getMouseUpHandler(Button.RIGHT) }></div>
-        <div id="center-button"></div>
-        <div className="action-panel">
-          <div id="a-button" className="action-button" onMouseDown={ getMouseDownHandler(Button.A) }
-               onMouseUp={ getMouseUpHandler(Button.A) }>
-            <div className="label">A</div>
-          </div>
-          <div id="b-button" className="action-button" onMouseDown={ getMouseDownHandler(Button.B) }
-               onMouseUp={ getMouseUpHandler(Button.B) }>
-            <div className="label">B</div>
-          </div>
-        </div>
-      </div>
+      <ControlPanel emulator={emulator}></ControlPanel>
     </div>
 
     {/*<div className="gameboy">*/ }
