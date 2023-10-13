@@ -1,17 +1,24 @@
 @import '../../styles/colors';
 
-$gameboy-body-color: #989181;
-$center-panel-color: #282828;
-$dpad-button-color: #3a3a3a;
 $dpad-button-border-radius: 2px;
-$dpad-highlight-color: rgba(255, 255, 255, 0.2);
-$action-button-color: #660459;
-$action-button-highlight-color: rgba(255, 255, 255, 0.3);
-$button-shadow-size: 0.14em;
+$button-shadow-size: 3px;
+
+$app-padding: 15px;
+$app-row-gap: 20px;
+$title-height: 50px;
+$button-height: 35px;
+$gameboy-padding: 8px;
+$gameboy-canvas-border: 3px;
 
 @font-face {
   font-family: "Pixel";
   src: url("../../../static/DigitalDisco.ttf") format("truetype");
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
 }
 
 html, body, #root {
@@ -31,17 +38,22 @@ html, body, #root {
 
 .app {
   display: flex;
-  gap: 20px;
-  width: 500px;
+  outline: none;
+  gap: $app-row-gap;
+  @media only screen and (max-width: 600px) {
+    width: 100%;
+  }
+  width: calc(2 * #{$app-padding} + ((100vh - 2 * #{$app-padding} - 2 * #{$app-row-gap} - #{$title-height} - #{$button-height} - #{$gameboy-padding} - 2 * #{$gameboy-canvas-border}) / 1.6));
   flex-direction: column;
   box-sizing: border-box;
-  padding: 15px;
+  padding: $app-padding;
   background-color: $center-panel-color;
 }
 
 .title {
   text-align: center;
-  font-size: 50px;
+  font-size: $title-height;
+  line-height: $title-height;
   font-family: "Pixel";
   color: white;
   text-shadow: 3px 10px 2px black;
@@ -56,17 +68,17 @@ html, body, #root {
   font-size: 30px;
   flex-direction: column;
   box-sizing: border-box;
-  padding: 0.3em 0.6em 0 0.3em;
+  padding: $gameboy-padding $gameboy-padding 0;
   border-radius: 10px 10px 40px 10px;
-  background-color: #989181;
-  box-shadow: inset -0.3em -0.5em rgba(0,0,0,0.5);
+  background-color: $gameboy-body-color;
+  box-shadow: 6px 8px 2px darken($gameboy-body-color, 25%);
 }
 
 #main-canvas {
   margin: -3px;
   margin-bottom: 0;
-  border: 3px solid black;
-  background-color: white;
+  border: $gameboy-canvas-border solid black;
+  background-color: #0f0f0f;
   border-radius: 4px;
   width: 100%;
 }
@@ -88,6 +100,7 @@ html, body, #root {
 
 .dpad-button {
   position: relative;
+  cursor: pointer;
   border-radius: $dpad-button-border-radius;
   box-shadow: 0 0 $button-shadow-size $button-shadow-size rgba(0, 0, 0, 0.9);
   border-color: rgba(255, 255, 255, 0.2);
@@ -108,8 +121,15 @@ html, body, #root {
 #up-button {
   @extend .dpad-button;
   background: linear-gradient(to bottom, $dpad-highlight-color 10%, transparent 10%),
+  linear-gradient(to right, $dpad-highlight-color 5%, transparent 5% 95%, $dpad-highlight-color 95%),
+  linear-gradient(to bottom, $dpad-button-color, $dpad-button-color);
+
+  &:hover {
+    background: linear-gradient(to bottom, $dpad-highlight-color 10%, transparent 10%),
     linear-gradient(to right, $dpad-highlight-color 5%, transparent 5% 95%, $dpad-highlight-color 95%),
-    linear-gradient(to bottom, $dpad-button-color, $dpad-button-color);
+    linear-gradient(to bottom, $dpad-button-hover-color, $dpad-button-hover-color);
+  }
+
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
   grid-row: 2;
@@ -119,8 +139,15 @@ html, body, #root {
 #down-button {
   @extend .dpad-button;
   background: linear-gradient(to top, $dpad-highlight-color 5%, transparent 5%),
+  linear-gradient(to right, $dpad-highlight-color 5%, transparent 5% 95%, $dpad-highlight-color 95%),
+  linear-gradient(to bottom, $dpad-button-color, $dpad-button-color);
+
+  &:hover {
+    background: linear-gradient(to top, $dpad-highlight-color 5%, transparent 5%),
     linear-gradient(to right, $dpad-highlight-color 5%, transparent 5% 95%, $dpad-highlight-color 95%),
-    linear-gradient(to bottom, $dpad-button-color, $dpad-button-color);
+    linear-gradient(to bottom, $dpad-button-hover-color, $dpad-button-hover-color);
+  }
+
   border-top-left-radius: 0;
   border-top-right-radius: 0;
   grid-row: 4;
@@ -130,7 +157,13 @@ html, body, #root {
 #left-button {
   @extend .dpad-button;
   background: linear-gradient(to bottom, $dpad-highlight-color 10%, transparent 5% 95%, $dpad-highlight-color 95%),
-    linear-gradient(to bottom, $dpad-button-color, $dpad-button-color);
+  linear-gradient(to bottom, $dpad-button-color, $dpad-button-color);
+
+  &:hover {
+    background: linear-gradient(to bottom, $dpad-highlight-color 10%, transparent 5% 95%, $dpad-highlight-color 95%),
+    linear-gradient(to bottom, $dpad-button-hover-color, $dpad-button-hover-color);
+  }
+
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
   grid-row: 3;
@@ -140,7 +173,13 @@ html, body, #root {
 #right-button {
   @extend .dpad-button;
   background: linear-gradient(to bottom, $dpad-highlight-color 10%, transparent 5% 95%, $dpad-highlight-color 95%),
-    linear-gradient(to bottom, $dpad-button-color, $dpad-button-color);
+  linear-gradient(to bottom, $dpad-button-color, $dpad-button-color);
+
+  &:hover {
+    background: linear-gradient(to bottom, $dpad-highlight-color 10%, transparent 5% 95%, $dpad-highlight-color 95%),
+    linear-gradient(to bottom, $dpad-button-hover-color, $dpad-button-hover-color);
+  }
+
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   grid-row: 3;
@@ -170,25 +209,43 @@ html, body, #root {
 
 .action-button {
   display: flex;
+  cursor: pointer;
+  user-select: none;
   justify-content: center;
   align-items: center;
   position: relative;
+  border: 2px solid rgba(0, 0, 0, 0.3);
   border-radius: 50%;
   background-color: $action-button-color;
-  box-shadow: 0 0 $button-shadow-size $button-shadow-size rgba(0, 0, 0, 0.7);
+  box-shadow: 0 0 $button-shadow-size $button-shadow-size rgba(0, 0, 0, 0.6);
+
+  &:hover {
+    background-color: $action-button-hover-color;
+
+    > .label {
+      background: radial-gradient(circle at center, $action-button-hover-color 56%, transparent 70%),
+      conic-gradient(
+                      $action-button-hover-color 30deg,
+                      $action-button-highlight-color 30deg 90deg,
+                      $action-button-hover-color 90deg 250deg,
+                      $action-button-highlight-color 250deg 330deg,
+                      $action-button-hover-color 330deg
+      );
+    }
+  }
 
   > .label {
     display: flex;
     justify-content: center;
     align-items: center;
     background: radial-gradient(circle at center, #660459 56%, transparent 70%),
-      conic-gradient(
+    conic-gradient(
                     $action-button-color 30deg,
                     $action-button-highlight-color 30deg 90deg,
                     $action-button-color 90deg 250deg,
                     $action-button-highlight-color 250deg 330deg,
                     $action-button-color 330deg
-      );
+    );
     border-radius: 50%;
     color: #35022e;
     width: 80%;
@@ -283,13 +340,19 @@ html, body, #root {
 }
 
 .button {
-  display: block;
+  display: flex;
+  outline: none;
+  justify-content: center;
+  align-items: center;
   cursor: pointer;
+  user-select: none;
+  height: $button-height;
   padding: 8px;
+  box-sizing: border-box;
+  background-color: $button-color;
   font-family: "Pixel";
   border-radius: 3px;
   text-shadow: 2px 2px 2px black;
-  background-color: $button-color;
   color: white;
 
   &:hover {

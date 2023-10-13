@@ -134,10 +134,10 @@ export const App = () => {
     setObjectInfoIndex(undefined)
   }
 
-  const drawChannels = (newEmulator: Emulator) => () => {
-    newEmulator.draw()
-    requestAnimationFrame(drawChannels(newEmulator))
-  }
+  // const drawChannels = (newEmulator: WebEmulator) => () => {
+  //   newEmulator.draw()
+  //   requestAnimationFrame(drawChannels(newEmulator))
+  // }
 
   const handleRomChange = async (event: FormEvent<HTMLInputElement>) => {
     const files = event.currentTarget.files;
@@ -156,16 +156,16 @@ export const App = () => {
         await audioContext.audioWorklet.addModule("white-noise-processor.js")
         const newEmulator = WebEmulator.new(byteArray, audioContext);
         setEmulator(newEmulator)
-        requestAnimationFrame(drawChannels(newEmulator))
+        // requestAnimationFrame(drawChannels(newEmulator))
       }
     }
   }
 
-  return <div className="app" onKeyDown={ onKeyDown } onKeyUp={ onKeyUp } tabIndex={ 0 }>
+  return <div className="app" onKeyDown={ onKeyDown } onKeyUp={ onKeyUp } tabIndex={ -1 }>
     <div className="title">RustBoy</div>
     <div className="button-bar">
-      <div>
-        <label className="button" htmlFor="rom_selector">Choose ROM</label>
+      <div className="button">
+        <label htmlFor="rom_selector">Choose ROM</label>
         <input
           className="hidden"
           type="file"
