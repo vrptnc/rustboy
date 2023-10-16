@@ -121,8 +121,12 @@ impl CanvasRenderer {
     self.depth_buffer.clear();
     self.depth_buffer.extend(iter::repeat(0).take(number_of_pixels));
     self.color_buffer.clear();
-    let background_colors = vec![self.background_color.red, self.background_color.green, self.background_color.blue, if self.background_color.transparent { 0x00 } else { 0xFF }];
-    self.color_buffer.extend(background_colors.iter().cycle().take(4 * number_of_pixels));
+    for _ in 0..number_of_pixels {
+      self.color_buffer.push(self.background_color.red);
+      self.color_buffer.push(self.background_color.green);
+      self.color_buffer.push(self.background_color.blue);
+      self.color_buffer.push(if self.background_color.transparent { 0x00 } else { 0xFF });
+    }
   }
 
   fn draw_pixel(&mut self, x: usize, y: usize, z: u8, color: Color) {

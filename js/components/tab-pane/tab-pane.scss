@@ -2,11 +2,36 @@
 @import '../../styles/dimensions';
 
 .tab-pane {
+  display: flex;
+  flex-direction: row;
   position: absolute;
   left: 100%;
+  top: 0;
+  bottom: 0;
 }
 
 .tabs {
   display: flex;
   flex-direction: column;
+}
+
+.tab {
+  display: flex;
+  cursor: pointer;
+  align-items: center;
+  flex: 1;
+  padding: 0 20px;
+  background-color: lighten($center-panel-color, 10%);
+  color: white;
+
+  &:hover {
+    background-color: lighten($center-panel-color, 5%);
+  }
+}
+
+.content {
+  display: flex;
+  justify-items: center;
+  align-items: center;
+  padding: 0 40px;
 }
