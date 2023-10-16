@@ -1,0 +1,22 @@
+@import '../../styles/colors';
+@import '../../styles/dimensions';
+
+.gameboy {
+  display: flex;
+  font-size: 30px;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: $gameboy-padding $gameboy-padding 0;
+  border-radius: 10px 10px 40px 10px;
+  background-color: $gameboy-body-color;
+  box-shadow: 6px 8px 2px darken($gameboy-body-color, 25%);
+}
+
+#main-canvas {
+  margin: -3px;
+  margin-bottom: 0;
+  border: $gameboy-canvas-border solid black;
+  background-color: #0f0f0f;
+  border-radius: 4px;
+  width: 100%;
+}

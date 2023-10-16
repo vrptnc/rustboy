@@ -1,0 +1,12 @@
+@import '../../styles/colors';
+@import '../../styles/dimensions';
+
+.tab-pane {
+  position: absolute;
+  left: 100%;
+}
+
+.tabs {
+  display: flex;
+  flex-direction: column;
+}

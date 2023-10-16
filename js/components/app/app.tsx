@@ -1,9 +1,12 @@
 import {Button, CPUInfo, OAMObject, WebEmulator} from '../../../pkg/rustboy';
-import React, {FormEvent, KeyboardEvent, MouseEvent, useEffect, useRef, useState} from 'react'
+import React, {FormEvent, Fragment, KeyboardEvent, MouseEvent, useEffect, useRef, useState} from 'react'
 import {ControlPanel} from "../control-panel/control-panel";
 import './app.scss'
 // @ts-ignore
 import gbImage from '../../images/gb.png'
+import {GameBoy} from "../gameboy/gameboy";
+import {ButtonBar} from "../button-bar/button-bar";
+import {TabPane} from "../tab-pane/tab-pane";
 
 export const App = () => {
 
@@ -134,111 +137,94 @@ export const App = () => {
   //   requestAnimationFrame(drawChannels(newEmulator))
   // }
 
-  const handleRomChange = async (event: FormEvent<HTMLInputElement>) => {
-    const files = event.currentTarget.files;
-    if (files != null && files.length > 0) {
-      const file = files.item(0)
-      if (file != null) {
-        const arrayBuffer = await file.arrayBuffer()
-        const byteArray = new Uint8Array(arrayBuffer);
-        if (emulator) {
-          emulator.free()
-        }
-        const AudioContext = window.AudioContext || window.webkitAudioContext
-        const audioContext: AudioContext = new AudioContext()
-        await audioContext.audioWorklet.addModule("pwm-processor.js")
-        await audioContext.audioWorklet.addModule("waveform-processor.js")
-        await audioContext.audioWorklet.addModule("white-noise-processor.js")
-        const newEmulator = WebEmulator.new(byteArray, audioContext);
-        setEmulator(newEmulator)
-        // requestAnimationFrame(drawChannels(newEmulator))
-      }
+  const handleRomSelected = async (rom: Uint8Array) => {
+    if (emulator) {
+      emulator.free()
     }
+    const AudioContext = window.AudioContext || window.webkitAudioContext
+    const audioContext: AudioContext = new AudioContext()
+    await audioContext.audioWorklet.addModule("pwm-processor.js")
+    await audioContext.audioWorklet.addModule("waveform-processor.js")
+    await audioContext.audioWorklet.addModule("white-noise-processor.js")
+    const newEmulator = WebEmulator.new(rom, audioContext);
+    setEmulator(newEmulator)
   }
 
-  return <div className="app" onKeyDown={ onKeyDown } onKeyUp={ onKeyUp } tabIndex={ -1 }>
-    <div className="title">RustBoy</div>
-    <div className="button-bar">
-      <div className="button">
-        <label htmlFor="rom_selector">Choose ROM</label>
-        <input
-          className="hidden"
-          type="file"
-          id="rom_selector"
-          name="rom_selector"
-          accept=".gb, .gbc"
-          onChange={ handleRomChange }/>
-      </div>
-    </div>
-    {/*<div className="menu">*/ }
-    {/*  <div>*/ }
-    {/*    <label className="button" htmlFor="rom_selector">Choose ROM</label>*/ }
-    {/*    <input*/ }
-    {/*        className="hidden"*/ }
-    {/*        type="file"*/ }
-    {/*        id="rom_selector"*/ }
-    {/*        name="rom_selector"*/ }
-    {/*        accept=".gb, .gbc"*/ }
-    {/*        onChange={ handleRomChange }/>*/ }
-    {/*  </div>*/ }
-    {/*  <div>*/ }
-    {/*    <div className="button" onClick={ togglePaused }>*/ }
-    {/*      { paused ? 'Resume' : 'Pause' }*/ }
-    {/*    </div>*/ }
-    {/*  </div>*/ }
-    {/*</div>*/ }
-    {/*<canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/ }
-    {/*        width={ 160 } height={ 32 }></canvas>*/ }
-    {/*<canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/ }
-    <div className="gameboy">
-      <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>
-      <ControlPanel emulator={emulator}></ControlPanel>
-    </div>
+  return <Fragment>
+    <div className="app" onKeyDown={ onKeyDown } onKeyUp={ onKeyUp } tabIndex={ -1 }>
+      <div className="title">RustBoy</div>
+      <ButtonBar onRomSelected={handleRomSelected}/>
 
-    {/*<div className="gameboy">*/ }
-    {/*  <img width={ "361px" } height={ "621px" } src={ gbImage }></img>*/ }
-    {/*  <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>*/ }
-    {/*</div>*/ }
-    {/*<div className="object-debugger">*/ }
-    {/*  <h3>OAM Content</h3>*/ }
-    {/*  <canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/ }
-    {/*          width={ 160 } height={ 32 }></canvas>*/ }
-    {/*  {*/ }
-    {/*    selectedObject ? <div id="object-info-container">*/ }
-    {/*      <div>X: { selectedObject.lcd_x }</div>*/ }
-    {/*      <div>Y: { selectedObject.lcd_y }</div>*/ }
-    {/*      <div>Tile Index: { selectedObject.tile_index }</div>*/ }
-    {/*      <div>Attributes: { `0x${ selectedObject.attributes.value().toString(16) }` }</div>*/ }
-    {/*    </div> : <React.Fragment/>*/ }
+      {/*<div className="menu">*/ }
+      {/*  <div>*/ }
+      {/*    <label className="button" htmlFor="rom_selector">Choose ROM</label>*/ }
+      {/*    <input*/ }
+      {/*        className="hidden"*/ }
+      {/*        type="file"*/ }
+      {/*        id="rom_selector"*/ }
+      {/*        name="rom_selector"*/ }
+      {/*        accept=".gb, .gbc"*/ }
+      {/*        onChange={ handleRomChange }/>*/ }
+      {/*  </div>*/ }
+      {/*  <div>*/ }
+      {/*    <div className="button" onClick={ togglePaused }>*/ }
+      {/*      { paused ? 'Resume' : 'Pause' }*/ }
+      {/*    </div>*/ }
+      {/*  </div>*/ }
+      {/*</div>*/ }
+      {/*<canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/ }
+      {/*        width={ 160 } height={ 32 }></canvas>*/ }
+      {/*<canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/ }
+      <GameBoy emulator={emulator}/>
 
-    {/*  }*/ }
-    {/*</div>*/ }
-    {/*<div className="tile-debugger">*/ }
-    {/*  <h3>Tile data</h3>*/ }
-    {/*  <canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/ }
-    {/*</div>*/ }
-    {/*<div className="audio-debugger">*/ }
-    {/*  <h3>Audio</h3>*/ }
-    {/*  <canvas id="ch1-canvas" width={ 200 } height={ 100 }></canvas>*/ }
-    {/*  <canvas id="ch2-canvas" width={ 200 } height={ 100 }></canvas>*/ }
-    {/*  <canvas id="ch3-canvas" width={ 200 } height={ 100 }></canvas>*/ }
-    {/*  <canvas id="ch4-canvas" width={ 200 } height={ 100 }></canvas>*/ }
-    {/*</div>*/ }
-    {/*<div className="cpu-info">*/ }
-    {/*  <h3>CPU Info</h3>*/ }
-    {/*  {*/ }
-    {/*    paused && cpuInfo != null ? <div>*/ }
-    {/*      <div>AF: 0x{ cpuInfo.AF?.toString(16) }</div>*/ }
-    {/*      <div>BC: 0x{ cpuInfo.BC?.toString(16) }</div>*/ }
-    {/*      <div>DE: 0x{ cpuInfo.DE?.toString(16) }</div>*/ }
-    {/*      <div>HL: 0x{ cpuInfo.HL?.toString(16) }</div>*/ }
-    {/*      <div>SP: 0x{ cpuInfo.SP?.toString(16) }</div>*/ }
-    {/*      <div>PC: 0x{ cpuInfo.PC?.toString(16) }</div>*/ }
-    {/*      <div>Stopped: { cpuInfo.stopped ? 'true' : 'false' }</div>*/ }
-    {/*      <div>Enabled: { cpuInfo.enabled ? 'true' : 'false' }</div>*/ }
-    {/*      <div>Instruction: { instruction }</div>*/ }
-    {/*    </div> : <React.Fragment/>*/ }
-    {/*  }*/ }
-    {/*</div>*/ }
-  </div>
+      {/*<div className="gameboy">*/ }
+      {/*  <img width={ "361px" } height={ "621px" } src={ gbImage }></img>*/ }
+      {/*  <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>*/ }
+      {/*</div>*/ }
+      {/*<div className="object-debugger">*/ }
+      {/*  <h3>OAM Content</h3>*/ }
+      {/*  <canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/ }
+      {/*          width={ 160 } height={ 32 }></canvas>*/ }
+      {/*  {*/ }
+      {/*    selectedObject ? <div id="object-info-container">*/ }
+      {/*      <div>X: { selectedObject.lcd_x }</div>*/ }
+      {/*      <div>Y: { selectedObject.lcd_y }</div>*/ }
+      {/*      <div>Tile Index: { selectedObject.tile_index }</div>*/ }
+      {/*      <div>Attributes: { `0x${ selectedObject.attributes.value().toString(16) }` }</div>*/ }
+      {/*    </div> : <React.Fragment/>*/ }
+
+      {/*  }*/ }
+      {/*</div>*/ }
+      {/*<div className="tile-debugger">*/ }
+      {/*  <h3>Tile data</h3>*/ }
+      {/*  <canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/ }
+      {/*</div>*/ }
+      {/*<div className="audio-debugger">*/ }
+      {/*  <h3>Audio</h3>*/ }
+      {/*  <canvas id="ch1-canvas" width={ 200 } height={ 100 }></canvas>*/ }
+      {/*  <canvas id="ch2-canvas" width={ 200 } height={ 100 }></canvas>*/ }
+      {/*  <canvas id="ch3-canvas" width={ 200 } height={ 100 }></canvas>*/ }
+      {/*  <canvas id="ch4-canvas" width={ 200 } height={ 100 }></canvas>*/ }
+      {/*</div>*/ }
+      {/*<div className="cpu-info">*/ }
+      {/*  <h3>CPU Info</h3>*/ }
+      {/*  {*/ }
+      {/*    paused && cpuInfo != null ? <div>*/ }
+      {/*      <div>AF: 0x{ cpuInfo.AF?.toString(16) }</div>*/ }
+      {/*      <div>BC: 0x{ cpuInfo.BC?.toString(16) }</div>*/ }
+      {/*      <div>DE: 0x{ cpuInfo.DE?.toString(16) }</div>*/ }
+      {/*      <div>HL: 0x{ cpuInfo.HL?.toString(16) }</div>*/ }
+      {/*      <div>SP: 0x{ cpuInfo.SP?.toString(16) }</div>*/ }
+      {/*      <div>PC: 0x{ cpuInfo.PC?.toString(16) }</div>*/ }
+      {/*      <div>Stopped: { cpuInfo.stopped ? 'true' : 'false' }</div>*/ }
+      {/*      <div>Enabled: { cpuInfo.enabled ? 'true' : 'false' }</div>*/ }
+      {/*      <div>Instruction: { instruction }</div>*/ }
+      {/*    </div> : <React.Fragment/>*/ }
+      {/*  }*/ }
+      {/*</div>*/ }
+      <TabPane emulator={emulator}/>
+    </div>
+  </Fragment>
+
+
 }
