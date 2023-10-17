@@ -55,12 +55,7 @@ html, body, #root {
   grid-area: cpu-info;
 }
 
-.object-debugger {
-  grid-area: object-debugger;
-  display: flex;
-  flex-direction: column;
-  row-gap: 20px;
-}
+
 
 .tile-debugger {
   grid-area: tile-debugger;
@@ -87,11 +82,7 @@ html, body, #root {
   gap: 15px;
 }
 
-#object-canvas {
-  background-color: #a3b0a3;
-  width: 160px;
-  border: 1px solid black;
-}
+
 
 #oscilloscope-canvas {
   background-color: white;
@@ -105,11 +96,7 @@ html, body, #root {
   border: 1px solid black;
 }
 
-#tile-atlas-canvas {
-  background-color: #a3b0a3;
-  width: 256px;
-  border: 1px solid black;
-}
+
 
 .button {
   display: flex;
@@ -136,10 +123,7 @@ html, body, #root {
   }
 }
 
-.button-bar {
-  display: flex;
-  flex-direction: row;
-}
+
 
 .hidden {
   display: none;

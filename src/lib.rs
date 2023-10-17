@@ -10,6 +10,7 @@ mod controllers;
 mod time;
 mod infrastructure;
 mod audio;
+mod state;
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;

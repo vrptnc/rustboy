@@ -61,6 +61,7 @@ pub struct Emulator<A: AudioDriver, R: Renderer> {
   reserved_area_2: LinearMemory::<0x0060, 0xFEA0>,
   unmapped_memory: UnmappedMemory,
   audio_driver: A,
+  paused: bool
 }
 
 impl <A: AudioDriver, R: Renderer> Emulator<A, R> {
@@ -126,6 +127,7 @@ impl <A: AudioDriver, R: Renderer> Emulator<A, R> {
       renderer,
       unmapped_memory,
       audio_driver,
+      paused: false
     }
   }
 
@@ -168,6 +170,14 @@ impl <A: AudioDriver, R: Renderer> Emulator<A, R> {
 
   pub fn set_object_atlas_rendering_enabled(&mut self, enabled: bool) {
     self.renderer.set_render_target_enabled(RenderTarget::ObjectAtlas, enabled);
+  }
+
+  pub fn is_paused(&self) -> bool {
+    self.paused
+  }
+
+  pub fn set_paused(&mut self, paused: bool) {
+    self.paused = paused;
   }
 
   pub fn cpu_info(&self) -> CPUInfo {
@@ -250,11 +260,13 @@ impl <A: AudioDriver, R: Renderer> Emulator<A, R> {
   }
 
   pub fn run_for_nanos(&mut self, nanos: u64) {
-    let mut remaining_nanos = nanos;
-    while remaining_nanos > 0 {
-      let double_speed = self.speed_controller.double_speed();
-      remaining_nanos = remaining_nanos.saturating_sub(if double_speed { 500 } else { 1000 });
-      self.tick();
+    if !self.paused {
+      let mut remaining_nanos = nanos;
+      while remaining_nanos > 0 {
+        let double_speed = self.speed_controller.double_speed();
+        remaining_nanos = remaining_nanos.saturating_sub(if double_speed { 500 } else { 1000 });
+        self.tick();
+      }
     }
   }
 }

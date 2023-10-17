@@ -1,6 +1,5 @@
-import {Button, CPUInfo, OAMObject, WebEmulator} from '../../../pkg/rustboy';
-import React, {FormEvent, Fragment, KeyboardEvent, MouseEvent, useEffect, useRef, useState} from 'react'
-import {ControlPanel} from "../control-panel/control-panel";
+import {Button, CPUInfo, WebEmulator} from '../../../pkg/rustboy';
+import React, {Fragment, KeyboardEvent, useEffect, useRef, useState} from 'react'
 import './app.scss'
 // @ts-ignore
 import gbImage from '../../images/gb.png'
@@ -11,9 +10,7 @@ import {TabPane} from "../tab-pane/tab-pane";
 export const App = () => {
 
   const [emulator, setEmulator] = useState<WebEmulator>()
-  const [paused, setPaused] = useState<boolean>(false)
-  const [objectInfoIndex, setObjectInfoIndex] = useState<number>()
-  const [selectedObject, setSelectedObject] = useState<OAMObject>()
+
   const [cpuInfo, setCPUInfo] = useState<CPUInfo>()
   const previousTimeRef = useRef<number>()
   const animationFrameId = useRef<number>()
@@ -42,18 +39,6 @@ export const App = () => {
     scheduleRun()
   }
 
-  const togglePaused = () => {
-    if (paused) {
-      scheduleRun()
-    } else if (animationFrameId.current != null) {
-      cancelAnimationFrame(animationFrameId.current)
-      previousTimeRef.current = undefined
-      const info = emulator?.cpu_info();
-      setCPUInfo(info)
-    }
-    setPaused(!paused)
-  }
-
   // const doTick = () => {
   //   if (paused) {
   //     emulator?.execute_machine_cycle()
@@ -77,21 +62,10 @@ export const App = () => {
     if (animationFrameId.current != null) {
       cancelAnimationFrame(animationFrameId.current)
     }
-    if (emulator != null && !paused) {
+    if (emulator != null) {
       requestAnimationFrame(execute)
     }
   }, [emulator])
-
-  useEffect(() => {
-    if (objectInfoIndex != null && emulator != null) {
-      const object = emulator.get_object(objectInfoIndex)
-      setSelectedObject(object)
-    } else {
-      setSelectedObject(undefined)
-    }
-
-  }, [objectInfoIndex])
-
 
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -114,23 +88,6 @@ export const App = () => {
     }
   }
 
-  const onMouseMoveInObjectCanvas = (event: MouseEvent) => {
-    const infoElement = event.currentTarget
-    const infoElementStyle = window.getComputedStyle(infoElement)
-    const infoElementBoundingRect = infoElement.getBoundingClientRect()
-    const x = Math.round(event.clientX - infoElementBoundingRect.left - parseFloat(infoElementStyle.borderLeftWidth ?? '0'))
-    const y = Math.round(event.clientY - infoElementBoundingRect.top - parseFloat(infoElementStyle.borderTopWidth ?? '0'))
-    if (x >= 0 && x <= 159 && y >= 0 && y <= 31) {
-      const objectIndex = Math.floor(y / 16) * 16 + Math.floor(x / 8)
-      setObjectInfoIndex(objectIndex)
-    } else {
-      setObjectInfoIndex(undefined)
-    }
-  }
-
-  const onMouseLeaveObjectCanvas = () => {
-    setObjectInfoIndex(undefined)
-  }
 
   // const drawChannels = (newEmulator: WebEmulator) => () => {
   //   newEmulator.draw()
@@ -153,7 +110,7 @@ export const App = () => {
   return <Fragment>
     <div className="app" onKeyDown={ onKeyDown } onKeyUp={ onKeyUp } tabIndex={ -1 }>
       <div className="title">RustBoy</div>
-      <ButtonBar onRomSelected={handleRomSelected}/>
+      <ButtonBar onRomSelected={ handleRomSelected } emulator={ emulator }/>
 
       {/*<div className="menu">*/ }
       {/*  <div>*/ }
@@ -170,35 +127,8 @@ export const App = () => {
       {/*    <div className="button" onClick={ togglePaused }>*/ }
       {/*      { paused ? 'Resume' : 'Pause' }*/ }
       {/*    </div>*/ }
-      {/*  </div>*/ }
-      {/*</div>*/ }
-      {/*<canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/ }
-      {/*        width={ 160 } height={ 32 }></canvas>*/ }
-      {/*<canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/ }
-      <GameBoy emulator={emulator}/>
+      <GameBoy emulator={ emulator }/>
 
-      {/*<div className="gameboy">*/ }
-      {/*  <img width={ "361px" } height={ "621px" } src={ gbImage }></img>*/ }
-      {/*  <canvas id="main-canvas" width={ 160 } height={ 144 }></canvas>*/ }
-      {/*</div>*/ }
-      {/*<div className="object-debugger">*/ }
-      {/*  <h3>OAM Content</h3>*/ }
-      {/*  <canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }*/ }
-      {/*          width={ 160 } height={ 32 }></canvas>*/ }
-      {/*  {*/ }
-      {/*    selectedObject ? <div id="object-info-container">*/ }
-      {/*      <div>X: { selectedObject.lcd_x }</div>*/ }
-      {/*      <div>Y: { selectedObject.lcd_y }</div>*/ }
-      {/*      <div>Tile Index: { selectedObject.tile_index }</div>*/ }
-      {/*      <div>Attributes: { `0x${ selectedObject.attributes.value().toString(16) }` }</div>*/ }
-      {/*    </div> : <React.Fragment/>*/ }
-
-      {/*  }*/ }
-      {/*</div>*/ }
-      {/*<div className="tile-debugger">*/ }
-      {/*  <h3>Tile data</h3>*/ }
-      {/*  <canvas id="tile-canvas" width={ 256 } height={ 192 }></canvas>*/ }
-      {/*</div>*/ }
       {/*<div className="audio-debugger">*/ }
       {/*  <h3>Audio</h3>*/ }
       {/*  <canvas id="ch1-canvas" width={ 200 } height={ 100 }></canvas>*/ }
@@ -222,7 +152,7 @@ export const App = () => {
       {/*    </div> : <React.Fragment/>*/ }
       {/*  }*/ }
       {/*</div>*/ }
-      <TabPane emulator={emulator}/>
+      <TabPane emulator={ emulator }/>
     </div>
   </Fragment>
 

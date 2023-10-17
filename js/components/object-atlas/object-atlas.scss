@@ -1,0 +1,14 @@
+@import '../../styles/colors';
+@import '../../styles/dimensions';
+
+.object-atlas {
+  display: flex;
+  flex-direction: column;
+  row-gap: 20px;
+}
+
+#object-canvas {
+  background-color: #a3b0a3;
+  width: 160px;
+  border: 1px solid black;
+}

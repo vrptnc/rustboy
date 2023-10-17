@@ -46,6 +46,14 @@ impl WebEmulator {
     self.emulator.set_object_atlas_rendering_enabled(enabled);
   }
 
+  pub fn is_paused(&self) -> bool {
+    self.emulator.is_paused()
+  }
+
+  pub fn set_paused(&mut self, paused: bool) {
+    self.emulator.set_paused(paused);
+  }
+
   pub fn run_for_nanos(&mut self, nanos: u64) {
     self.emulator.run_for_nanos(nanos);
   }

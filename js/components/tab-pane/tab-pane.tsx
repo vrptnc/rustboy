@@ -3,6 +3,8 @@ import {WebEmulator} from "../../../pkg/rustboy";
 import {FaTableCells, FaVectorSquare} from "react-icons/fa6";
 
 import './tab-pane.scss'
+import {TileAtlas} from "../tile-atlas/tile-atlas";
+import {ObjectAtlas} from "../object-atlas/object-atlas";
 
 export interface TabBarProps {
   emulator: WebEmulator | undefined
@@ -16,72 +18,50 @@ enum Tab {
 interface TabConfig {
   icon: ReactNode
   tab: Tab
-  callback: (enabled: boolean) => void
 }
 
 
-
-export const TabPane = ({emulator}: TabBarProps) => {
-  const TABS: Array<TabConfig> = [
-    {
-      icon: <FaTableCells title="Tile Memory" size={ 40 }/>,
-      tab: Tab.TILE_MEMORY,
-      callback: (enabled: boolean) => emulator?.set_tile_atlas_rendering_enabled(enabled)
-    },
-    {
-      icon: <FaVectorSquare title="Object Memory" size={ 40 }/>,
-      tab: Tab.OBJECT_MEMORY,
-      callback: (enabled: boolean) => emulator?.set_object_atlas_rendering_enabled(enabled)
-    }
-  ]
-
+export const TabPane = ({ emulator }: TabBarProps) => {
   const [activeTab, setActiveTab] = useState<Tab>()
 
-  const getContent = () => {
+  const Content = () => {
     if (activeTab === Tab.TILE_MEMORY) {
-      return <div>
-        <canvas id="tile-atlas-canvas" width={ 256 } height={ 192 }></canvas>
-      </div>
+      return <div className="content"><TileAtlas emulator={ emulator }/></div>
     } else if (activeTab === Tab.OBJECT_MEMORY) {
-      return <div>
-        <canvas id="tile-atlas-canvas" width={ 256 } height={ 192 }></canvas>
-      </div>
+      return <div className="content"><ObjectAtlas emulator={ emulator }/></div>
     }
-    return <Fragment/>
+    return <div className="content"></div>
   }
 
-  const getTab = ({icon, tab, callback}: TabConfig) => <div className={'tab' + (activeTab === tab ? ' active' : '')}
-         onClick={() => {
-           if (activeTab === tab) {
-             setActiveTab(undefined)
-             setTimeout(() => callback(false), 0)
-             callback(false)
-           } else {
-             setActiveTab(tab)
-             setTimeout(() => callback(true), 0)
-           }
-         }}>
-    {
-      icon
-    }
-    </div>
-
-  const Content = () => (
-    <div className="content">
+  const Tabs = () => {
+    const TABS: Array<TabConfig> = [
       {
-        getContent()
+        icon: <FaTableCells title="Tile Memory" size={ 40 }/>,
+        tab: Tab.TILE_MEMORY
+      },
+      {
+        icon: <FaVectorSquare title="Object Memory" size={ 40 }/>,
+        tab: Tab.OBJECT_MEMORY
+      }
+    ]
+
+    const getTab = ({ icon, tab }: TabConfig) => <div
+      className={ 'tab' + (activeTab === tab ? ' active' : '') }
+      onClick={ () => setActiveTab(activeTab === tab ? undefined : tab) }>
+      {
+        icon
       }
     </div>
-  )
 
-  return <div className="tab-pane">
-    {
-      activeTab != null ? <Content/> : null
-    }
-    <div className="tabs">
+    return <div className="tabs">
       {
         TABS.map((tabConfig) => getTab(tabConfig))
       }
     </div>
+  }
+
+  return <div className="tab-pane">
+    <Content/>
+    <Tabs/>
   </div>
 }

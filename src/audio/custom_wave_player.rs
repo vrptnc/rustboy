@@ -1,6 +1,8 @@
+use std::io::{Read, Write};
 use web_sys::console;
 
 use crate::audio::audio_driver::{AudioDriver, Channel, CustomWaveOptions};
+use crate::state::state::Serializable;
 use crate::util::request_flag::RequestFlag;
 
 pub enum CustomWavePlayerTickResult {
@@ -100,5 +102,15 @@ impl CustomWavePlayer {
       });
     }
     CustomWavePlayerTickResult::Ok
+  }
+}
+
+impl Serializable for CustomWavePlayer {
+  fn write_to(&self, writer: &dyn Write) {
+    todo!()
+  }
+
+  fn read_from(&mut self, reader: &dyn Read) {
+    todo!()
   }
 }
