@@ -2,13 +2,17 @@ use std::io::Read;
 
 use itertools::Either;
 use mockall::automock;
-use web_sys::console;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::{SeqAccess, Visitor};
+use serde::ser::SerializeSeq;
+use serde_with::serde_as;
 
 use crate::memory::cram::ColorReference;
 use crate::memory::memory::{Memory, MemoryAddress};
 use crate::memory::oam::OAMObject;
 use crate::renderer::renderer::{Point, TileAddressingMode, TileMapIndex};
 use crate::util::bit_util::{BitUtil, ByteUtil};
+use crate::util::serialization::{ByteSliceVisitor, ByteVisitor};
 
 #[derive(Copy, Clone)]
 pub struct TileAttributes(u8);
@@ -136,8 +140,11 @@ pub trait VRAM {
   fn tile_atlas_line_colors(&self, line: u8) -> Vec<u8>;
 }
 
+#[serde_as]
+#[derive(Serialize, Deserialize)]
 pub struct VRAMImpl {
   bank_index: u8,
+  #[serde_as(as = "[[_;VRAMImpl::BANK_SIZE]; 2]")]
   bytes: [[u8; VRAMImpl::BANK_SIZE]; 2],
 }
 

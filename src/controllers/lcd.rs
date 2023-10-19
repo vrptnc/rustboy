@@ -1,14 +1,11 @@
-use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::rc::Rc;
 
-use closure::closure;
 use mockall::automock;
+use serde::{Deserialize, Serialize};
 
 use crate::cpu::interrupts::{Interrupt, InterruptController};
 use crate::memory::cram::CRAM;
 use crate::memory::mbc::MBC;
-use crate::memory::mbc::MockROM;
 use crate::memory::memory::{CGBMode, Memory, MemoryAddress};
 use crate::memory::oam::{OAM, OAMObject, ObjectReference};
 use crate::memory::vram::{BackgroundParams, ObjectParams, VRAM, WindowParams};
@@ -17,7 +14,7 @@ use crate::util::bit_util::BitUtil;
 
 const DOTS_PER_FRAME: u32 = 70224;
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LCDMode {
   HBlank,
   VBlank,
@@ -25,6 +22,7 @@ pub enum LCDMode {
   Mode3,
 }
 
+#[derive(Serialize, Deserialize)]
 struct Stat(u8);
 
 impl Stat {
@@ -60,6 +58,7 @@ impl Stat {
   }
 }
 
+#[derive(Serialize, Deserialize)]
 struct LCDC(u8);
 
 impl LCDC {
@@ -105,6 +104,7 @@ pub trait LCDController {
   fn get_mode(&self) -> LCDMode;
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct LCDControllerImpl {
   cgb_mode: CGBMode,
   current_object_index: u8,
@@ -116,13 +116,11 @@ pub struct LCDControllerImpl {
   mode: LCDMode,
   lcdc: LCDC,
   stat: Stat,
-  interrupt_line: bool,
-  // The STAT interrupt is triggered on the rising edge of this line (which is the ORed combination of the various sources that can trigger the input)
+  interrupt_line: bool,  // The STAT interrupt is triggered on the rising edge of this line (which is the OR'ed combination of the various sources that can trigger the input)
   opri: u8,
   scy: u8,
   scx: u8,
   lyc: u8,
-
   wy: u8,
   wx: u8,
 }

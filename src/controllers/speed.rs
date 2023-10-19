@@ -1,4 +1,5 @@
 use mockall::automock;
+use serde::{Deserialize, Serialize};
 
 use crate::cpu::cpu::CPU;
 use crate::memory::memory::Memory;
@@ -9,6 +10,7 @@ pub trait SpeedController {
   fn double_speed(&self) -> bool;
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct SpeedControllerImpl(u8);
 
 impl SpeedControllerImpl {

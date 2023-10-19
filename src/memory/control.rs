@@ -1,15 +1,18 @@
+use serde::{Deserialize, Serialize};
+
 use crate::memory::memory::Memory;
 
+#[derive(Serialize, Deserialize)]
 pub struct ControlRegisters {
   key0: u8,
-  bank: u8
+  bank: u8,
 }
 
 impl ControlRegisters {
   pub fn new() -> ControlRegisters {
     ControlRegisters {
       key0: 0,
-      bank: 0
+      bank: 0,
     }
   }
 }

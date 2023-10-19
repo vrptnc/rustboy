@@ -1,12 +1,13 @@
-use web_sys::console;
+use serde::{Deserialize, Serialize};
+
 use crate::audio::audio_driver::Channel;
 
 pub enum LengthTimerTickResult {
   Ok,
-  Expired
+  Expired,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct LengthTimerSettings {
   pub initial_value: u16,
 }
@@ -19,6 +20,7 @@ impl LengthTimerSettings {
   }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct LengthTimer {
   channel: Channel,
   current_value: u16,

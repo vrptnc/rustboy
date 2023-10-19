@@ -9,6 +9,8 @@ import {TabPane} from "../tab-pane/tab-pane";
 
 export const App = () => {
 
+  const MINIMUM_FPS = 5;
+
   const [emulator, setEmulator] = useState<WebEmulator>()
 
   const [cpuInfo, setCPUInfo] = useState<CPUInfo>()
@@ -33,8 +35,10 @@ export const App = () => {
     const currentTime = performance.now()
     const previousTime = previousTimeRef.current ?? (currentTime - 1)
     const deltaMilliseconds = currentTime - previousTime
-    const deltaNanoseconds = BigInt(Math.floor(deltaMilliseconds * 1_000_000))
-    emulator?.run_for_nanos(deltaNanoseconds)
+    if (1000 / deltaMilliseconds >= MINIMUM_FPS) {
+      const deltaNanoseconds = BigInt(Math.floor(deltaMilliseconds * 1_000_000))
+      emulator?.run_for_nanos(deltaNanoseconds)
+    }
     previousTimeRef.current = currentTime
     scheduleRun()
   }
@@ -44,17 +48,6 @@ export const App = () => {
   //     emulator?.execute_machine_cycle()
   //     const info = emulator?.cpu_info();
   //     setCPUInfo(info)
-  //   }
-  // }
-
-  // const saveState = () => {
-  //   if (emulator) {
-  //     setPaused(true)
-  //     const state = emulator.get_state()
-  //     const blob = new Blob([state.buffer], {
-  //       type: 'application/octet-stream'
-  //     })
-  //     saveAs(blob, 'state.bin')
   //   }
   // }
 

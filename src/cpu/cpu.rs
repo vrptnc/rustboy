@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use mockall::automock;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::cpu::decoder::{InstructionDecoder, InstructionScheduler};
@@ -38,12 +39,14 @@ pub struct CPUInfo {
 
 }
 
+#[derive(Serialize, Deserialize)]
 struct InstructionContext {
   byte_buffer: u8,
   word_buffer: u16,
   address_buffer: u16,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct CPUImpl {
   enabled: bool,
   stopped: bool,

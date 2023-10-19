@@ -1,4 +1,5 @@
 use mockall::automock;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::cpu::interrupts::{Interrupt, InterruptController};
@@ -11,6 +12,7 @@ pub trait ButtonController {
   fn release_button(&mut self, button: Button);
 }
 
+#[derive(Serialize, Deserialize)]
 struct ButtonRegister {
   deferred_interrupt: bool,
   button_enabled_bit: u8,
@@ -56,6 +58,7 @@ impl ButtonRegister {
   }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct ButtonControllerImpl {
   action_buttons_register: ButtonRegister,
   direction_buttons_register: ButtonRegister,

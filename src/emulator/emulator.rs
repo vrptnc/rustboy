@@ -1,14 +1,14 @@
-use std::backtrace::Backtrace;
 use std::borrow::{Borrow, BorrowMut};
 use std::cell::RefCell;
+use std::io::Cursor;
 use std::panic;
 use std::rc::Rc;
+use bincode::{deserialize_from, deserialize_in_place, Options, serialize_into};
 
-use wasm_bindgen::prelude::wasm_bindgen;
-use web_sys::{AudioContext, console};
+use serde::{Serialize, Deserialize};
+use web_sys::console;
 
-use crate::audio::audio_driver::{AudioDriver, Channel, DutyCycle};
-use crate::audio::web_audio_driver::WebAudioDriver;
+use crate::audio::audio_driver::AudioDriver;
 use crate::controllers::audio::AudioControllerImpl;
 use crate::controllers::buttons::{Button, ButtonController, ButtonControllerImpl};
 use crate::controllers::dma::{DMAController, DMAControllerImpl};
@@ -35,9 +35,7 @@ use crate::memory::stack::Stack;
 use crate::memory::unmapped::UnmappedMemory;
 use crate::memory::vram::VRAMImpl;
 use crate::memory::wram::WRAMImpl;
-use crate::renderer::canvas_renderer::CanvasRenderer;
-use crate::renderer::renderer::{Color, Renderer, RenderTarget};
-use crate::util::bit_util::BitUtil;
+use crate::renderer::renderer::{Renderer, RenderTarget};
 use crate::util::instruction_label_provider::InstructionLabelProvider;
 
 pub struct Emulator<A: AudioDriver, R: Renderer> {
@@ -61,10 +59,10 @@ pub struct Emulator<A: AudioDriver, R: Renderer> {
   reserved_area_2: LinearMemory::<0x0060, 0xFEA0>,
   unmapped_memory: UnmappedMemory,
   audio_driver: A,
-  paused: bool
+  paused: bool,
 }
 
-impl <A: AudioDriver, R: Renderer> Emulator<A, R> {
+impl<A: AudioDriver, R: Renderer> Emulator<A, R> {
   pub fn new(rom_bytes: &[u8], audio_driver: A, renderer: R) -> Self {
     panic::set_hook(Box::new(console_error_panic_hook::hook));
     let rom_size = ROMSize::from_byte(rom_bytes[0x0148]);
@@ -127,13 +125,51 @@ impl <A: AudioDriver, R: Renderer> Emulator<A, R> {
       renderer,
       unmapped_memory,
       audio_driver,
-      paused: false
+      paused: false,
     }
   }
 
   pub fn get_state(&self) -> Vec<u8> {
-    let mut bytes: Vec<u8> = Vec::new();
-    bytes
+    let mut buffer: Vec<u8> = Vec::new();
+    serialize_into(&mut buffer, &self.cpu);
+    serialize_into(&mut buffer, &self.cram);
+    serialize_into(&mut buffer, &self.vram);
+    serialize_into(&mut buffer, &self.wram);
+    serialize_into(&mut buffer, &self.oam);
+    serialize_into(&mut buffer, &self.lcd);
+    serialize_into(&mut buffer, &self.timer);
+    serialize_into(&mut buffer, &self.dma);
+    serialize_into(&mut buffer, &self.stack);
+    serialize_into(&mut buffer, &self.button_controller);
+    serialize_into(&mut buffer, &self.audio_controller);
+    serialize_into(&mut buffer, &self.control_registers);
+    serialize_into(&mut buffer, &self.reserved_area_1);
+    serialize_into(&mut buffer, &self.reserved_area_2);
+    serialize_into(&mut buffer, &self.interrupt_controller);
+    serialize_into(&mut buffer, &self.speed_controller);
+    serialize_into(&mut buffer, &self.unmapped_memory);
+    buffer
+  }
+
+  pub fn load_state(&mut self, buffer: &[u8]) {
+    let mut cursor = Cursor::new(buffer);
+    self.cpu = deserialize_from(&mut cursor).unwrap();
+    self.cram = deserialize_from(&mut cursor).unwrap();
+    self.vram = deserialize_from(&mut cursor).unwrap();
+    self.wram = deserialize_from(&mut cursor).unwrap();
+    self.oam = deserialize_from(&mut cursor).unwrap();
+    self.lcd = deserialize_from(&mut cursor).unwrap();
+    self.timer = deserialize_from(&mut cursor).unwrap();
+    self.dma = deserialize_from(&mut cursor).unwrap();
+    self.stack = deserialize_from(&mut cursor).unwrap();
+    self.button_controller = deserialize_from(&mut cursor).unwrap();
+    self.audio_controller = deserialize_from(&mut cursor).unwrap();
+    self.control_registers = deserialize_from(&mut cursor).unwrap();
+    self.reserved_area_1 = deserialize_from(&mut cursor).unwrap();
+    self.reserved_area_2 = deserialize_from(&mut cursor).unwrap();
+    self.interrupt_controller = deserialize_from(&mut cursor).unwrap();
+    self.speed_controller = deserialize_from(&mut cursor).unwrap();
+    self.unmapped_memory = deserialize_from(&mut cursor).unwrap();
   }
 
   fn create_rom(rom_bytes: &[u8], rom_size: ROMSize, ram_size: RAMSize) -> Rc<RefCell<dyn MBC>> {

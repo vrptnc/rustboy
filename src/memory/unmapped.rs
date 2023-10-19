@@ -1,5 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use crate::memory::memory::Memory;
 
+#[derive(Serialize, Deserialize)]
 pub struct UnmappedMemory {
   ff03: u8,
   ff08_ff0e: [u8; 7],

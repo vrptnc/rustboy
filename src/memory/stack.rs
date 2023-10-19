@@ -1,6 +1,12 @@
+use serde::{Deserialize, Serialize, Serializer};
+use serde_with::serde_as;
+
 use crate::memory::memory::Memory;
 
+#[serde_as]
+#[derive(Serialize, Deserialize)]
 pub struct Stack {
+  #[serde_as(as = "[_;Stack::SIZE]")]
   bytes: [u8; Stack::SIZE],
 }
 

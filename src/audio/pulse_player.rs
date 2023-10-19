@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::audio::audio_driver::{AudioDriver, Channel, DutyCycle, PulseOptions};
 use crate::util::request_flag::RequestFlag;
 
@@ -6,7 +8,7 @@ pub enum PulsePlayerTickResult {
   WavelengthOverflowed,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct PulsePlayerSettings {
   pub initial_wavelength: u16,
   pub shift: u8,
@@ -43,6 +45,7 @@ impl PulsePlayerSettings {
   }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PulsePlayer {
   channel: Channel,
   triggered: RequestFlag,

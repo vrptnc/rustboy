@@ -5,7 +5,7 @@ use crate::memory::mbc::MBC;
 use crate::renderer::renderer::Color;
 use crate::util::bit_util::BitUtil;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct CompatibilityPalettes {
   pub bgp: [Color; 4],
   pub obj0: [Color; 4],

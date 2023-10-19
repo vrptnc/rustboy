@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::cpu::interrupts::{Interrupt, InterruptController};
 use crate::memory::memory::{Memory, MemoryAddress};
 use crate::util::bit_util::BitUtil;
@@ -7,6 +9,7 @@ pub trait TimerController {
   fn get_divider(&self) -> u16;
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct TimerControllerImpl {
   clock_pulse_bit: u8,
   divider: u16,
@@ -85,10 +88,12 @@ impl Memory for TimerControllerImpl {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
   use test_case::test_case;
+
   use crate::cpu::interrupts::InterruptControllerImpl;
   use crate::memory::memory::MemoryAddress;
+
+  use super::*;
 
   fn timer_ticks(timer: &mut dyn TimerController, interrupt_controller: &mut dyn InterruptController, ticks: usize) {
     for _ in 0..ticks {

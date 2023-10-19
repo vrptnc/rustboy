@@ -1,11 +1,14 @@
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use mockall::automock;
-use web_sys::console;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_with::serde_as;
 
 use crate::emulator::compatibility_palette::CompatibilityPalettes;
 use crate::memory::memory::{Memory, MemoryAddress};
+use crate::memory::wram::WRAMImpl;
 use crate::renderer::renderer::Color;
 use crate::util::bit_util::BitUtil;
+use crate::util::serialization::{ByteSliceVisitor, ByteVisitor};
 
 const COLORS_PER_PALETTE: usize = 4;
 const NUMBER_OF_PALETTES: usize = 8;
@@ -26,13 +29,17 @@ pub trait CRAM {
   fn object_color(&self, color_ref: ColorReference) -> Color;
 }
 
+#[serde_as]
+#[derive(Serialize, Deserialize)]
 pub struct CRAMImpl {
   monochrome_background_palette: u8,
   monochrome_object_palette_0: u8,
   monochrome_object_palette_1: u8,
   background_palette_index: u8,
+  #[serde_as(as = "[_;64]")]
   background_palettes: [u8; 2 * COLORS_PER_PALETTE * NUMBER_OF_PALETTES],
   object_palette_index: u8,
+  #[serde_as(as = "[_;64]")]
   object_palettes: [u8; 2 * COLORS_PER_PALETTE * NUMBER_OF_PALETTES],
 }
 
@@ -70,7 +77,7 @@ impl CRAM for CRAMImpl {
     self.background_color(ColorReference {
       palette_index: color_ref.palette_index,
       color_index: real_color_index,
-      foreground: color_ref.foreground
+      foreground: color_ref.foreground,
     })
   }
 

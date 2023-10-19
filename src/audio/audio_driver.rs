@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 #[derive(Copy, Clone)]
 pub struct PulseOptions {
   pub frequency: f32,
@@ -15,7 +17,7 @@ pub struct NoiseOptions {
   pub short: bool
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum Channel {
   CH1,
   CH2,
@@ -23,13 +25,13 @@ pub enum Channel {
   CH4,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub enum StereoChannel {
   Left,
   Right,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum DutyCycle {
   Duty125,
   Duty250,

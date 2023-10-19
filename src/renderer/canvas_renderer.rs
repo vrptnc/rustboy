@@ -36,21 +36,21 @@ impl Renderer for CompositeCanvasRenderer {
       RenderTarget::Main => {
         if self.main_renderer.is_none() && enabled {
           self.main_renderer = Some(CanvasRenderer::new("main-canvas", Color::white()));
-        } else {
+        } else if !enabled {
           self.main_renderer = None;
         }
       }
       RenderTarget::ObjectAtlas => {
         if self.object_atlas_renderer.is_none() && enabled {
           self.object_atlas_renderer = Some(CanvasRenderer::new("object-atlas-canvas", Color::transparent()));
-        } else {
+        } else if !enabled {
           self.object_atlas_renderer = None;
         }
       }
       RenderTarget::TileAtlas => {
         if self.tile_atlas_renderer.is_none() && enabled {
           self.tile_atlas_renderer = Some(CanvasRenderer::new("tile-atlas-canvas", Color::transparent()));
-        } else {
+        } else if !enabled {
           self.tile_atlas_renderer = None;
         }
       }

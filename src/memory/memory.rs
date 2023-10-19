@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 pub trait Memory {
   fn read(&self, address: u16) -> u8;
   fn write(&mut self, address: u16, value: u8);
@@ -162,7 +164,7 @@ impl RAMSize {
   }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum CGBMode {
   Monochrome,
   Color,

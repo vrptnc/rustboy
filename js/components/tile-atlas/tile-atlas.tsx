@@ -9,9 +9,14 @@ export interface TileAtlasProps {
 
 export const TileAtlas = ({ emulator }: TileAtlasProps) => {
   const enableTileAtlasRendering = () => {
+    console.log('Enabling tile atlas rendering')
     emulator?.set_tile_atlas_rendering_enabled(true);
 
-    return () => emulator?.set_tile_atlas_rendering_enabled(false)
+    return () => {
+      console.log('Disabling tile atlas rendering')
+
+      emulator?.set_tile_atlas_rendering_enabled(false)
+    }
   }
 
   useEffect(enableTileAtlasRendering, [])

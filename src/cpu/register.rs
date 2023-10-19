@@ -1,6 +1,7 @@
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum WordRegister {
   AF,
   BC,
@@ -66,7 +67,7 @@ impl WordRegister {
   }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum ByteRegister {
   A,
   F,
@@ -115,6 +116,7 @@ impl ByteRegister {
   }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Registers([u8; 12]);
 
 impl Registers {

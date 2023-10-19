@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use crate::cpu::interrupts::Interrupt;
 use crate::cpu::register::{ByteRegister, WordRegister};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum ByteLocation {
   Value(u8),
   Register(ByteRegister),
@@ -15,7 +16,7 @@ pub enum ByteLocation {
   MemoryReferencedByRegister(WordRegister),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum WordLocation {
   Value(u16),
   Register(WordRegister),
@@ -23,7 +24,7 @@ pub enum WordLocation {
   AddressBuffer,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct ByteArithmeticParams {
   pub first: ByteLocation,
   pub second: ByteLocation,
@@ -32,46 +33,46 @@ pub struct ByteArithmeticParams {
   pub flag_mask: u8,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct ByteOperationParams {
   pub source: ByteLocation,
   pub destination: ByteLocation,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct WordOperationParams {
   pub source: WordLocation,
   pub destination: WordLocation,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct ByteCastingParams {
   pub source: ByteLocation,
   pub destination: WordLocation
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct ByteRotationParams {
   pub source: ByteLocation,
   pub destination: ByteLocation,
   pub unset_zero: bool,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct ByteShiftParams {
   pub source: ByteLocation,
   pub destination: ByteLocation,
   pub arithmetic: bool,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct ByteLogicParams {
   pub first: ByteLocation,
   pub second: ByteLocation,
   pub destination: ByteLocation,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct WordArithmeticParams {
   pub first: WordLocation,
   pub second: WordLocation,
@@ -79,7 +80,7 @@ pub struct WordArithmeticParams {
   pub flag_mask: u8,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum Instruction {
   Noop,
   Defer,

@@ -1,11 +1,10 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use mockall::automock;
+use serde::{Deserialize, Serialize};
+
 use crate::memory::memory::{Memory, MemoryAddress};
 use crate::util::bit_util::BitUtil;
-use web_sys::console;
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Interrupt {
   VerticalBlank,
   Stat,
@@ -57,6 +56,7 @@ pub trait InterruptController {
   fn clear_interrupt(&mut self, interrupt: Interrupt);
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct InterruptControllerImpl {
   interrupt_request: u8,
   interrupt_enable: u8,
@@ -117,9 +117,8 @@ impl Memory for InterruptControllerImpl {
       // Strictly speaking, address 0xFEA1 is in a prohibited address range, but this is a dirty hack to allow
       // the CPU to get the requested interrupt efficiently through the memory bus.
       MemoryAddress::RI => {
-
         self.get_requested_interrupt().map(|interrupt| interrupt.get_bit()).unwrap_or(0xFF)
-      },
+      }
       _ => panic!("InterruptController can't read address {}", address)
     }
   }

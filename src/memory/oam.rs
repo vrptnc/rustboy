@@ -1,11 +1,13 @@
 use mockall::automock;
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::memory::memory::Memory;
 use crate::util::bit_util::BitUtil;
 
 #[wasm_bindgen]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct ObjectAttributes(u8);
 
 #[wasm_bindgen]
@@ -36,7 +38,7 @@ impl ObjectAttributes {
 }
 
 #[wasm_bindgen]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct OAMObject {
   pub lcd_y: u8,
   pub lcd_x: u8,
@@ -44,7 +46,7 @@ pub struct OAMObject {
   pub attributes: ObjectAttributes,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct ObjectReference {
   pub object_index: u8,
   pub use_bottom_tile: bool
@@ -56,7 +58,10 @@ pub trait OAM {
   fn get_object(&self, object_reference: ObjectReference, use_8_x_16_tiles: bool) -> OAMObject;
 }
 
+#[serde_as]
+#[derive(Serialize, Deserialize)]
 pub struct OAMImpl {
+  #[serde_as(as = "[_;160]")]
   bytes: [u8; 160],
 }
 

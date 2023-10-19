@@ -1,5 +1,6 @@
 extern crate alloc;
 extern crate core;
+extern crate serde;
 
 mod emulator;
 mod renderer;
@@ -10,7 +11,6 @@ mod controllers;
 mod time;
 mod infrastructure;
 mod audio;
-mod state;
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;

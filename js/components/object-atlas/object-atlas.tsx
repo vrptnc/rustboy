@@ -50,7 +50,7 @@ export const ObjectAtlas = ({ emulator }: ObjectAtlasProps) => {
   }
 
   return <div className="object-atlas">
-    <canvas id="object-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }
+    <canvas id="object-atlas-canvas" onMouseMove={ onMouseMoveInObjectCanvas } onMouseLeave={ onMouseLeaveObjectCanvas }
             width={ 160 } height={ 32 }></canvas>
     {
       selectedObject ? <div id="object-info-container">

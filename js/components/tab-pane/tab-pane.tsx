@@ -30,17 +30,17 @@ export const TabPane = ({ emulator }: TabBarProps) => {
     } else if (activeTab === Tab.OBJECT_MEMORY) {
       return <div className="content"><ObjectAtlas emulator={ emulator }/></div>
     }
-    return <div className="content"></div>
+    return <Fragment/>
   }
 
   const Tabs = () => {
     const TABS: Array<TabConfig> = [
       {
-        icon: <FaTableCells title="Tile Memory" size={ 40 }/>,
+        icon: <FaTableCells title="Tile Memory" size={ 20 }/>,
         tab: Tab.TILE_MEMORY
       },
       {
-        icon: <FaVectorSquare title="Object Memory" size={ 40 }/>,
+        icon: <FaVectorSquare title="Object Memory" size={ 20 }/>,
         tab: Tab.OBJECT_MEMORY
       }
     ]

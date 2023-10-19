@@ -1,13 +1,16 @@
+use serde::{Deserialize, Serialize};
+
 use crate::audio::audio_driver::{AudioDriver, Channel, NoiseOptions};
 use crate::util::request_flag::RequestFlag;
 
+#[derive(Serialize, Deserialize)]
 pub struct NoisePlayer {
   channel: Channel,
   pub clock_shift: u8,
   pub short: bool,
   pub clock_divider: u8,
   triggered: RequestFlag,
-  pub playing: bool
+  pub playing: bool,
 }
 
 impl NoisePlayer {
@@ -18,7 +21,7 @@ impl NoisePlayer {
       short: false,
       clock_divider: 0,
       triggered: RequestFlag::new(),
-      playing: false
+      playing: false,
     }
   }
 

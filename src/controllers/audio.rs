@@ -1,8 +1,9 @@
 use mockall::automock;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::convert::IntoWasmAbi;
 use web_sys::console;
 
-use crate::audio::audio_driver::{AudioDriver, Channel, CustomWaveOptions, DutyCycle, NoiseOptions, PulseOptions, StereoChannel};
+use crate::audio::audio_driver::{AudioDriver, Channel, DutyCycle, StereoChannel};
 use crate::audio::custom_wave_player::{CustomWavePlayer, CustomWavePlayerTickResult};
 use crate::audio::gain_controller::{GainController, GainControllerTickResult};
 use crate::audio::length_timer::{LengthTimer, LengthTimerTickResult};
@@ -19,6 +20,7 @@ use crate::util::request_flag::RequestFlag;
 #[automock]
 pub trait AudioController {}
 
+#[derive(Serialize, Deserialize)]
 pub struct AudioControllerImpl {
   enabled: bool,
   disabled_request: RequestFlag,
@@ -110,7 +112,7 @@ impl AudioControllerImpl {
       });
   }
 
-   pub fn tick(&mut self, audio_driver: &mut dyn AudioDriver, timer: &dyn TimerController, double_speed: bool) {
+  pub fn tick(&mut self, audio_driver: &mut dyn AudioDriver, timer: &dyn TimerController, double_speed: bool) {
     if self.disabled_request.get_and_clear() {
       self.disable(audio_driver);
     }
@@ -275,7 +277,7 @@ impl Memory for AudioControllerImpl {
           ((self.ch3_custom_wave_player.playing as u8) << 2) |
           ((self.ch4_noise_player.playing as u8) << 3) |
           ((self.enabled as u8) << 7)
-      },
+      }
       0xFF27..=0xFF2F => 0,
       0xFF30..=0xFF3F => self.waveform_ram[address as usize - 0xFF30],
       _ => panic!("AudioController can't read from address {}", address)
@@ -384,7 +386,7 @@ impl Memory for AudioControllerImpl {
       MemoryAddress::NR51 => {
         self.mixing_control = value;
         self.mixing_control_changed.set();
-      },
+      }
       MemoryAddress::NR52 => {
         if !value.get_bit(7) {
           self.disabled_request.set();

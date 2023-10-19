@@ -57,4 +57,12 @@ impl WebEmulator {
   pub fn run_for_nanos(&mut self, nanos: u64) {
     self.emulator.run_for_nanos(nanos);
   }
+
+  pub fn get_state(&self) -> Vec<u8> {
+    self.emulator.get_state()
+  }
+
+  pub fn load_state(&mut self, buffer: &[u8]) {
+    self.emulator.load_state(buffer);
+  }
 }

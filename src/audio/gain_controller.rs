@@ -1,12 +1,13 @@
-use web_sys::console;
+use serde::{Deserialize, Serialize};
+
 use crate::audio::audio_driver::{AudioDriver, Channel};
 
 pub enum GainControllerTickResult {
   Ok,
-  DacShutOff
+  DacShutOff,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct GainControllerSettings {
   pub initial_value: u8,
   pub pace: u8,
@@ -23,6 +24,7 @@ impl GainControllerSettings {
   }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct GainController {
   channel: Channel,
   current_tick: u8,

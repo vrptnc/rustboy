@@ -1,8 +1,6 @@
-use std::io::{Read, Write};
-use web_sys::console;
+use serde::{Deserialize, Serialize};
 
 use crate::audio::audio_driver::{AudioDriver, Channel, CustomWaveOptions};
-use crate::state::state::Serializable;
 use crate::util::request_flag::RequestFlag;
 
 pub enum CustomWavePlayerTickResult {
@@ -10,6 +8,7 @@ pub enum CustomWavePlayerTickResult {
   DacShutOff,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct CustomWavePlayer {
   channel: Channel,
   pub waveform: [u8; 16],
@@ -102,15 +101,5 @@ impl CustomWavePlayer {
       });
     }
     CustomWavePlayerTickResult::Ok
-  }
-}
-
-impl Serializable for CustomWavePlayer {
-  fn write_to(&self, writer: &dyn Write) {
-    todo!()
-  }
-
-  fn read_from(&mut self, reader: &dyn Read) {
-    todo!()
   }
 }

@@ -1,4 +1,4 @@
-use web_sys::console;
+use serde::{Deserialize, Serialize};
 
 use crate::controllers::lcd::{LCDController, LCDMode};
 use crate::CPU;
@@ -6,7 +6,7 @@ use crate::infrastructure::toggle::Toggle;
 use crate::memory::memory::{Memory, MemoryAddress};
 use crate::util::bit_util::BitUtil;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Serialize, Deserialize)]
 enum DMATransferType {
   Inactive,
   Legacy,
@@ -14,6 +14,7 @@ enum DMATransferType {
   HBlank,
 }
 
+#[derive(Serialize, Deserialize)]
 struct DMATransfer {
   transfer_type: DMATransferType,
   source_address: u16,
@@ -58,6 +59,7 @@ pub trait DMAController {
   fn tick(&mut self, memory: &mut dyn Memory, cpu: &mut dyn CPU, lcd: &dyn LCDController, double_speed: bool);
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct DMAControllerImpl {
   dma: u8,
   high_source_address: u8,
