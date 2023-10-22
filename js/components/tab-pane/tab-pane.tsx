@@ -60,8 +60,8 @@ export const TabPane = ({ emulator }: TabBarProps) => {
     </div>
   }
 
-  return <div className="tab-pane">
+  return emulator ? <div className="tab-pane">
     <Content/>
     <Tabs/>
-  </div>
+  </div> : <Fragment/>
 }

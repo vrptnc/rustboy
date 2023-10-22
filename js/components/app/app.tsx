@@ -1,5 +1,5 @@
 import {Button, CPUInfo, WebEmulator} from '../../../pkg/rustboy';
-import React, {Fragment, KeyboardEvent, useEffect, useRef, useState} from 'react'
+import React, {KeyboardEvent, useEffect, useRef, useState} from 'react'
 import './app.scss'
 // @ts-ignore
 import gbImage from '../../images/gb.png'
@@ -100,7 +100,7 @@ export const App = () => {
     setEmulator(newEmulator)
   }
 
-  return <Fragment>
+  return <div id="root">
     <div className="app" onKeyDown={ onKeyDown } onKeyUp={ onKeyUp } tabIndex={ -1 }>
       <div className="title">RustBoy</div>
       <ButtonBar onRomSelected={ handleRomSelected } emulator={ emulator }/>
@@ -145,9 +145,7 @@ export const App = () => {
       {/*    </div> : <React.Fragment/>*/ }
       {/*  }*/ }
       {/*</div>*/ }
-      <TabPane emulator={ emulator }/>
     </div>
-  </Fragment>
-
-
+    <TabPane emulator={ emulator }/>
+  </div>
 }

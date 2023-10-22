@@ -101,6 +101,6 @@ export const ButtonBar = ({ onRomSelected, emulator }: ButtonBarProps) => {
     </div>
     <SaveStateButton/>
     <LoadStateButton/>
-    <PauseButton/> `
+    <PauseButton/>
   </div>
 }

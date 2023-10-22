@@ -21,15 +21,20 @@ html, body, #root {
 }
 
 #root {
-  display: flex;
-  flex-direction: row;
-  justify-content: center;
+  display: grid;
+  grid-template-areas: ". app tab-pane";
+  grid-template-columns: 1fr auto 1fr;
+  @media only screen and (max-width: 600px) {
+    grid-template-areas: "app";
+    grid-template-columns: 1fr;
+  }
   background-color: darken($center-panel-color, 10%);
 }
 
 .app {
   display: flex;
   position: relative;
+  grid-area: app;
   outline: none;
   gap: $app-row-gap;
   @media only screen and (max-width: 600px) {

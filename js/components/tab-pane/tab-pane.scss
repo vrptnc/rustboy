@@ -3,11 +3,11 @@
 
 .tab-pane {
   display: flex;
+  @media only screen and (max-width: 800px) {
+    display: none;
+  }
   flex-direction: row;
-  position: absolute;
-  left: 100%;
-  top: 0;
-  bottom: 0;
+  grid-area: tab-pane;
 }
 
 .tabs {
@@ -61,6 +61,9 @@
 
 .content {
   display: flex;
+  flex-direction: row;
+  flex: 1;
+  max-width: 75%;
   justify-items: center;
   align-items: center;
   padding: 0 40px;

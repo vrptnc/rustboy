@@ -11,5 +11,5 @@ declare global {
 }
 
 init(rustboyWasm).then(() => {
-  ReactDOM.render(<App />, document.getElementById('root'));
+  ReactDOM.render(<App />, document.body);
 })
