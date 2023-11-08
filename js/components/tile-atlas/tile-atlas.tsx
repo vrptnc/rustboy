@@ -8,7 +8,7 @@ export interface TileAtlasProps {
 }
 
 export const TileAtlas = ({ emulator }: TileAtlasProps) => {
-  const enableTileAtlasRendering = () => {
+  const enableTileAtlasRendering = () => {git status
     console.log('Enabling tile atlas rendering')
     emulator?.set_tile_atlas_rendering_enabled(true);
 
